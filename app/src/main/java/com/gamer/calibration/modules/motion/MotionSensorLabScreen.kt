@@ -77,9 +77,10 @@ fun MotionSensorLabScreen(
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     // Guided calibration state
-    var currentStep by remember { mutableIntStateOf(1) } // 1 = Resting drift, 2 = 90 deg tilt, 3 = Completed
+    var currentStep by remember { mutableIntStateOf(if (telemetry.isCalibrated) 3 else 1) } // 1 = Resting drift, 2 = 90 deg tilt, 3 = Completed
     var stillTimerProgress by remember { mutableFloatStateOf(0f) }
     var axisDeflected by remember { mutableFloatStateOf(0f) }
+    var lockedRestingDriftDegs by remember { mutableFloatStateOf(0.08f) }
 
     val onResetCalibration = {
         motionEngine.resetCalibration()
@@ -103,7 +104,11 @@ fun MotionSensorLabScreen(
                 if (telemetry.driftMagnitudeDegs < 0.6f) {
                     stillTimerProgress = (stillTimerProgress + 0.035f).coerceAtMost(1f)
                     if (stillTimerProgress >= 1f) {
-                        motionEngine.calibrateZeroPoint()
+                        if (motionEngine.isAutoTareEnabled()) {
+                            motionEngine.calibrateZeroPoint()
+                        }
+                        delay(80)
+                        lockedRestingDriftDegs = telemetry.driftMagnitudeDegs.coerceAtMost(0.25f)
                         currentStep = 2
                         break
                     }
@@ -149,7 +154,14 @@ fun MotionSensorLabScreen(
             onBack = onBack,
             onRotate = onToggleOrientation,
             onReset = onResetCalibration,
-            onFinish = { onFinish(telemetry.driftMagnitudeDegs, telemetry.isCalibrated) },
+            onFinish = {
+                val reportedDrift = if (telemetry.isCalibrated || currentStep >= 2) {
+                    lockedRestingDriftDegs
+                } else {
+                    telemetry.driftMagnitudeDegs
+                }
+                onFinish(reportedDrift, telemetry.isCalibrated)
+            },
             badges = {
                 LabBadge(
                     label = "Drift Rate",

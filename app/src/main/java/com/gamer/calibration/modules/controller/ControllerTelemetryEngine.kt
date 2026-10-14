@@ -1,11 +1,10 @@
 package com.gamer.calibration.modules.controller
 
 import android.content.Context
+import android.hardware.input.InputManager
 import android.os.Build
-import android.os.CombinedVibration
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.os.VibratorManager
 import android.view.InputDevice
 import android.view.MotionEvent
 import com.gamer.calibration.domain.model.ControllerPrecisionSummary
@@ -31,16 +30,17 @@ import kotlin.math.sqrt
 class ControllerTelemetryEngine(
     private val context: Context,
     private val scope: CoroutineScope
-) {
+) : InputManager.InputDeviceListener {
+
+    private val inputManager = context.getSystemService(Context.INPUT_SERVICE) as? InputManager
+    private val settingsPrefs = context.getSharedPreferences("apex_calibrate_prefs", Context.MODE_PRIVATE)
 
     private val _telemetrySummary = MutableStateFlow(ControllerPrecisionSummary())
     val telemetrySummary: StateFlow<ControllerPrecisionSummary> = _telemetrySummary.asStateFlow()
 
-    // 360-degree boundary bins for outer boundary circularity error computation
     val leftOuterBoundaryBins = FloatArray(360) { 0f }
     val rightOuterBoundaryBins = FloatArray(360) { 0f }
 
-    // Lock-free recent coordinate trails for Canvas polar plotting
     val leftStickTrail = ConcurrentLinkedDeque<Pair<Float, Float>>()
     val rightStickTrail = ConcurrentLinkedDeque<Pair<Float, Float>>()
 
@@ -54,8 +54,13 @@ class ControllerTelemetryEngine(
 
     init {
         scanConnectedGamepads()
+        inputManager?.registerInputDeviceListener(this, null)
         startTelemetryLoop()
     }
+
+    override fun onInputDeviceAdded(deviceId: Int) = scanConnectedGamepads()
+    override fun onInputDeviceRemoved(deviceId: Int) = scanConnectedGamepads()
+    override fun onInputDeviceChanged(deviceId: Int) = scanConnectedGamepads()
 
     private fun startTelemetryLoop() {
         pollJob?.cancel()
@@ -70,14 +75,11 @@ class ControllerTelemetryEngine(
                     rightSampleCount = 0L
                     lastRateCalcTime = now
 
-                    // Feed shared rate to floating overlay
                     FloatingTelemetryService.sharedControllerHz = max(leftStickHz, rightStickHz)
                 }
 
-                // Periodically verify device connection
-                scanConnectedGamepads()
                 publishSummary()
-                delay(33) // ~30Hz decoupled Compose state updates
+                delay(33)
             }
         }
     }
@@ -99,13 +101,11 @@ class ControllerTelemetryEngine(
 
         if (matchedDevice != null) {
             val axes = mutableListOf<String>()
-            val motionRanges = matchedDevice.motionRanges
-            for (range in motionRanges) {
+            for (range in matchedDevice.motionRanges) {
                 axes.add(MotionEvent.axisToString(range.axis))
             }
 
             val hasVibe = matchedDevice.vibrator.hasVibrator()
-
             val rawName = matchedDevice.name ?: "Generic Gamepad"
             val guessed = com.gamer.calibration.domain.model.GamepadBrandGuesser.guess(
                 name = rawName,
@@ -125,6 +125,7 @@ class ControllerTelemetryEngine(
             )
             _telemetrySummary.value = _telemetrySummary.value.copy(device = info)
         } else {
+            FloatingTelemetryService.sharedControllerHz = 0.0
             _telemetrySummary.value = _telemetrySummary.value.copy(
                 device = GamepadDeviceInfo()
             )
@@ -133,16 +134,15 @@ class ControllerTelemetryEngine(
 
     fun handleGenericMotionEvent(event: MotionEvent): Boolean {
         if ((event.source and InputDevice.SOURCE_JOYSTICK) == 0 &&
-            (event.source and InputDevice.SOURCE_GAMEPAD) == 0) {
+            (event.source and InputDevice.SOURCE_GAMEPAD) == 0
+        ) {
             return false
         }
 
-        // Left Stick (AXIS_X, AXIS_Y)
         val lx = event.getAxisValue(MotionEvent.AXIS_X)
         val ly = event.getAxisValue(MotionEvent.AXIS_Y)
         processLeftStick(lx, ly)
 
-        // Right Stick (AXIS_Z, AXIS_RZ)
         val rx = event.getAxisValue(MotionEvent.AXIS_Z)
         val ry = event.getAxisValue(MotionEvent.AXIS_RZ)
         processRightStick(rx, ry)
@@ -163,7 +163,6 @@ class ControllerTelemetryEngine(
         if (angleDeg < 0) angleDeg += 360f
 
         val binIdx = angleDeg.toInt().coerceIn(0, 359)
-        // If pushing outer boundary, record peak
         if (r > 0.5f) {
             leftOuterBoundaryBins[binIdx] = max(leftOuterBoundaryBins[binIdx], r)
         }
@@ -239,25 +238,29 @@ class ControllerTelemetryEngine(
         )
     }
 
-    /**
-     * Natively trigger rumble motors. Left = Heavy Low-Freq, Right = Crisp High-Freq.
-     */
     fun triggerRumble(leftAmplitude: Float, rightAmplitude: Float, durationMs: Long = 300L) {
+        if (!settingsPrefs.getBoolean("haptics_enabled", true)) return
+
         _telemetrySummary.value = _telemetrySummary.value.copy(
             rumbleLeftMotor = leftAmplitude,
             rumbleRightMotor = rightAmplitude
         )
 
-        // Try gamepad vibrator if connected
+        val lowAmp = (leftAmplitude.coerceIn(0f, 1f) * 255).toInt().coerceIn(1, 255)
+        val highAmp = (rightAmplitude.coerceIn(0f, 1f) * 255).toInt().coerceIn(1, 255)
+        val halfDur = (durationMs / 2L).coerceAtLeast(50L)
+
+        // Two-stage low/high impulse waveform so left & right sliders produce distinct tactile profiles
+        val timings = longArrayOf(halfDur, halfDur)
+        val amplitudes = intArrayOf(lowAmp, highAmp)
+
         val devId = _telemetrySummary.value.device.id
         if (devId != -1) {
             val dev = InputDevice.getDevice(devId)
             val vibe = dev?.vibrator
             if (vibe != null && vibe.hasVibrator()) {
-                val combinedAmp = ((leftAmplitude + rightAmplitude) / 2f).coerceIn(0f, 1f)
-                val intAmp = (combinedAmp * 255).toInt().coerceIn(1, 255)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibe.vibrate(VibrationEffect.createOneShot(durationMs, intAmp))
+                    vibe.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
                 } else {
                     @Suppress("DEPRECATION")
                     vibe.vibrate(durationMs)
@@ -266,12 +269,10 @@ class ControllerTelemetryEngine(
             }
         }
 
-        // Fallback to phone onboard haptics
         val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         if (vibrator != null && vibrator.hasVibrator()) {
-            val intAmp = (((leftAmplitude + rightAmplitude) / 2f) * 255).toInt().coerceIn(1, 255)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(durationMs, intAmp))
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
             } else {
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(durationMs)

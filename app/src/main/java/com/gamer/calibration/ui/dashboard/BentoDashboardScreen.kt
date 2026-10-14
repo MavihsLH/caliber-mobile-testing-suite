@@ -317,7 +317,7 @@ fun BentoDashboardScreen(
 private fun DashboardTopHeader(
     onOpenSettings: () -> Unit
 ) {
-    val isHudActive = FloatingTelemetryService.isRunning
+    val isHudActive by FloatingTelemetryService.isRunningFlow.collectAsState()
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -580,7 +580,7 @@ private fun AudioModuleCard(
 
 @Composable
 private fun TriggersModuleCard(isCompact: Boolean = false, onClick: () -> Unit) {
-    val isHudActive = FloatingTelemetryService.isRunning
+    val isHudActive by FloatingTelemetryService.isRunningFlow.collectAsState()
     val badge = if (isHudActive) "HUD Active" else null
     if (isCompact) {
         CompactOptionCard(

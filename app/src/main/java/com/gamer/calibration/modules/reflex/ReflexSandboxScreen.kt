@@ -14,8 +14,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,15 +23,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ElectricBolt
@@ -42,9 +38,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -56,16 +51,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.gamer.calibration.ui.components.CyberButton
 import com.gamer.calibration.ui.components.KeepScreenOn
 import com.gamer.calibration.ui.components.TelemetryValue
 import com.gamer.calibration.ui.theme.MinimalGlassColors
 import com.gamer.calibration.ui.theme.MinimalTypography
 import com.gamer.calibration.ui.theme.TelemetryFonts
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.sqrt
@@ -87,11 +83,18 @@ fun ReflexSandboxScreen(
     KeepScreenOn()
     val context = LocalContext.current
     val vibrator = remember { androidx.core.content.ContextCompat.getSystemService(context, Vibrator::class.java) }
+    val appSettingsPrefs = remember { context.getSharedPreferences("apex_calibrate_prefs", Context.MODE_PRIVATE) }
+
     val prefs = remember {
         val oldPrefs = context.getSharedPreferences("gamersense_reflex_pb", Context.MODE_PRIVATE)
         val newPrefs = context.getSharedPreferences("caliber_reflex_pb", Context.MODE_PRIVATE)
         if (!newPrefs.contains("personal_best_ms") && oldPrefs.contains("personal_best_ms")) {
             newPrefs.edit().putLong("personal_best_ms", oldPrefs.getLong("personal_best_ms", 0L)).apply()
+        }
+        // Sanitize any corrupted < 80ms record caused by previous coroutine race condition
+        val existingPb = newPrefs.getLong("personal_best_ms", 0L)
+        if (existingPb in 1L..79L) {
+            newPrefs.edit().remove("personal_best_ms").apply()
         }
         newPrefs
     }
@@ -103,8 +106,16 @@ fun ReflexSandboxScreen(
     val trialHistory = remember { mutableStateListOf<Long>() }
 
     val coroutineScope = rememberCoroutineScope()
+    var activeTrialJob by remember { mutableStateOf<Job?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            activeTrialJob?.cancel()
+        }
+    }
 
     fun triggerHapticPulse() {
+        if (!appSettingsPrefs.getBoolean("haptics_enabled", true)) return
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator?.vibrate(VibrationEffect.createOneShot(35, VibrationEffect.DEFAULT_AMPLITUDE))
@@ -116,8 +127,9 @@ fun ReflexSandboxScreen(
     }
 
     fun startTrial() {
+        activeTrialJob?.cancel()
         reflexState = ReflexState.PREPARING
-        coroutineScope.launch {
+        activeTrialJob = coroutineScope.launch {
             val randomDelayMs = Random.nextLong(1500, 3800)
             delay(randomDelayMs)
             if (reflexState == ReflexState.PREPARING) {
@@ -128,18 +140,28 @@ fun ReflexSandboxScreen(
         }
     }
 
-    fun handleTap() {
+    fun handleTapDown(downTimeMs: Long) {
         when (reflexState) {
             ReflexState.IDLE -> {
                 startTrial()
             }
             ReflexState.PREPARING -> {
-                // False start! Tapped before trigger
+                // Cancel pending trigger coroutine immediately so it cannot fire on retry
+                activeTrialJob?.cancel()
+                activeTrialJob = null
                 reflexState = ReflexState.EARLY_FAULT
             }
             ReflexState.TRIGGERED -> {
-                val now = SystemClock.uptimeMillis()
+                val now = if (downTimeMs >= triggerUptime) downTimeMs else SystemClock.uptimeMillis()
                 val delta = (now - triggerUptime).coerceAtLeast(1L)
+
+                // Sub-80ms indicates a pre-fire anticipation tap started prior to visual recognition
+                if (delta < 80L) {
+                    activeTrialJob?.cancel()
+                    reflexState = ReflexState.EARLY_FAULT
+                    return
+                }
+
                 lastReactionMs = delta
                 trialHistory.add(delta)
 
@@ -156,7 +178,6 @@ fun ReflexSandboxScreen(
         }
     }
 
-    // Stats calculations
     val averageMs = if (trialHistory.isNotEmpty()) trialHistory.average().toLong() else 0L
     val bestInSession = if (trialHistory.isNotEmpty()) trialHistory.minOrNull() ?: 0L else 0L
     val jitterMs = if (trialHistory.size > 1) {
@@ -180,7 +201,7 @@ fun ReflexSandboxScreen(
         targetValue = when (reflexState) {
             ReflexState.IDLE -> MinimalGlassColors.PrimaryBlue
             ReflexState.PREPARING -> MinimalGlassColors.WarningAmber
-            ReflexState.TRIGGERED -> Color(0xFF00F5D4) // Electric Neon Cyan
+            ReflexState.TRIGGERED -> Color(0xFF00F5D4)
             ReflexState.EARLY_FAULT -> MinimalGlassColors.DangerRed
             ReflexState.RESULT -> MinimalGlassColors.SuccessGreen
         },
@@ -192,7 +213,6 @@ fun ReflexSandboxScreen(
             .fillMaxSize()
             .background(MinimalGlassColors.Background)
     ) {
-        // Top Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -217,33 +237,38 @@ fun ReflexSandboxScreen(
                     color = MinimalGlassColors.TextPrimary
                 )
                 Text(
-                    text = "Touch input latency and reaction speed",
+                    text = "Zero-lag touch-down latency & visual reflex test",
                     style = MinimalTypography.labelSmall.copy(fontSize = 11.sp),
                     color = MinimalGlassColors.TextMuted
                 )
             }
 
-            if (trialHistory.isNotEmpty()) {
-                IconButton(onClick = { trialHistory.clear(); reflexState = ReflexState.IDLE }) {
+            if (trialHistory.isNotEmpty() || personalBestMs > 0L) {
+                IconButton(onClick = {
+                    activeTrialJob?.cancel()
+                    trialHistory.clear()
+                    reflexState = ReflexState.IDLE
+                }) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reset set",
+                        contentDescription = "Reset session",
                         tint = MinimalGlassColors.TextSecondary
                     )
                 }
             }
         }
 
-        // Main Reflex Tap Arena
+        // Main Reflex Tap Arena using instantaneous ACTION_DOWN detection
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { handleTap() }
-                )
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        handleTapDown(down.uptimeMillis)
+                    }
+                }
                 .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -251,7 +276,6 @@ fun ReflexSandboxScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                // Interactive Reticle / Target
                 Box(
                     modifier = Modifier
                         .size(190.dp)
@@ -282,7 +306,6 @@ fun ReflexSandboxScreen(
                     }
                 }
 
-                // Prompt Text
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -290,7 +313,7 @@ fun ReflexSandboxScreen(
                     Text(
                         text = when (reflexState) {
                             ReflexState.IDLE -> "TAP TO START"
-                            ReflexState.PREPARING -> "WAIT FOR GREEN..."
+                            ReflexState.PREPARING -> "WAIT FOR CYAN..."
                             ReflexState.TRIGGERED -> "TAP NOW!"
                             ReflexState.EARLY_FAULT -> "TOO EARLY"
                             ReflexState.RESULT -> "$lastReactionMs MS"
@@ -303,10 +326,10 @@ fun ReflexSandboxScreen(
 
                     Text(
                         text = when (reflexState) {
-                            ReflexState.IDLE -> "Measures touch input latency and reaction speed"
-                            ReflexState.PREPARING -> "Keep finger ready above display"
-                            ReflexState.TRIGGERED -> "Tap screen as fast as possible"
-                            ReflexState.EARLY_FAULT -> "Tapped before signal. Tap to retry."
+                            ReflexState.IDLE -> "Captures hardware touch-down event on contact"
+                            ReflexState.PREPARING -> "Keep finger poised above display"
+                            ReflexState.TRIGGERED -> "Touch screen immediately!"
+                            ReflexState.EARLY_FAULT -> "Pre-fired before signal. Tap to retry."
                             ReflexState.RESULT -> getEsportsTier(lastReactionMs)
                         },
                         style = MinimalTypography.bodyMedium.copy(fontSize = 12.sp),
@@ -316,7 +339,6 @@ fun ReflexSandboxScreen(
             }
         }
 
-        // Live Telemetry Bar
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -356,9 +378,9 @@ fun ReflexSandboxScreen(
 
 private fun getEsportsTier(ms: Long): String {
     return when {
-        ms < 180 -> "Fast (< 180ms)"
-        ms in 180..220 -> "Good (180-220ms)"
-        ms in 221..270 -> "Average (221-270ms)"
-        else -> "Slow (> 270ms)"
+        ms < 175 -> "Pro Esports Tier (< 175ms)"
+        ms in 175..215 -> "Competitive Fast (175-215ms)"
+        ms in 216..265 -> "Average (216-265ms)"
+        else -> "Relaxed (> 265ms)"
     }
 }

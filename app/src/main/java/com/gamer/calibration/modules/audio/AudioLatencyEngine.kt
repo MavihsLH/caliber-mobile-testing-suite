@@ -9,12 +9,12 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
-import android.media.AudioTimestamp
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.gamer.calibration.domain.model.AudioLatencySummary
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,9 +47,9 @@ class AudioLatencyEngine(
     private val sampleRate = 48000
     private val chirpDurationMs = 25
     private val chirpSampleCount = (sampleRate * chirpDurationMs) / 1000 // 1200 samples
+    private val leadSilenceSamples = 480 // 10ms lead padding
     private val chirpSignal = ShortArray(chirpSampleCount)
 
-    // Waveforms for Canvas visualization
     val referenceChirpWaveform = FloatArray(120)
     val recordedWaveform = ConcurrentLinkedDeque<Float>()
     val correlationWaveform = ConcurrentLinkedDeque<Float>()
@@ -63,11 +63,14 @@ class AudioLatencyEngine(
     }
 
     private fun generateChirpReference() {
-        val freq = 1800.0 // 1.8 kHz audible burst
+        val freqStart = 1400.0
+        val freqEnd = 2800.0
         for (i in 0 until chirpSampleCount) {
+            val t = i.toDouble() / sampleRate
+            val durationSec = chirpDurationMs / 1000.0
+            val instantaneousPhase = 2.0 * PI * (freqStart * t + ((freqEnd - freqStart) / (2.0 * durationSec)) * t * t)
             val window = 0.5 * (1.0 - cos(2.0 * PI * i / (chirpSampleCount - 1)))
-            val sineVal = sin(2.0 * PI * freq * i / sampleRate)
-            val sample = (window * sineVal * Short.MAX_VALUE * 0.95).toInt().toShort()
+            val sample = (window * sin(instantaneousPhase) * Short.MAX_VALUE * 0.95).toInt().toShort()
             chirpSignal[i] = sample
             if (i < 120) {
                 referenceChirpWaveform[i] = (sample.toFloat() / Short.MAX_VALUE)
@@ -97,13 +100,13 @@ class AudioLatencyEngine(
                         }
                         AudioDeviceInfo.TYPE_WIRED_HEADSET,
                         AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
-                            deviceName = "Wired 3.5mm Headphone Jack"
+                            deviceName = "Wired 3.5mm Headphones"
                             break
                         }
                         AudioDeviceInfo.TYPE_USB_HEADSET,
                         AudioDeviceInfo.TYPE_USB_DEVICE -> {
                             val prod = dev.productName?.toString()?.trim() ?: "USB-C Audio DAC"
-                            deviceName = if (prod.isNotEmpty()) prod else "USB-C Audio Adapter / DAC"
+                            deviceName = if (prod.isNotEmpty()) prod else "USB-C Audio DAC"
                             break
                         }
                     }
@@ -129,13 +132,12 @@ class AudioLatencyEngine(
             Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
 
-        // 1. Calculate safe buffer sizes (Must exceed getMinBufferSize)
         val minTrackBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
-        val trackBufSize = max(minTrackBuf * 2, 8192)
+        val trackBufSize = max(minTrackBuf, 4096)
 
         val minRecordBuf = AudioRecord.getMinBufferSize(
             sampleRate,
@@ -148,11 +150,9 @@ class AudioLatencyEngine(
         var audioTrack: AudioTrack? = null
 
         try {
-            // 2. Initialize AudioTrack using STREAM mode for universal device compatibility
-            val trackAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
+            val trackAttributesBuilder = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
 
             val trackFormat = AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -161,13 +161,12 @@ class AudioLatencyEngine(
                 .build()
 
             audioTrack = AudioTrack.Builder()
-                .setAudioAttributes(trackAttributes)
+                .setAudioAttributes(trackAttributesBuilder.build())
                 .setAudioFormat(trackFormat)
                 .setBufferSizeInBytes(trackBufSize)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
 
-            // 3. Initialize AudioRecord if permission granted
             if (hasMicPermission) {
                 try {
                     val recordFormat = AudioFormat.Builder()
@@ -177,7 +176,7 @@ class AudioLatencyEngine(
                         .build()
 
                     audioRecord = AudioRecord.Builder()
-                        .setAudioSource(MediaRecorder.AudioSource.MIC)
+                        .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
                         .setAudioFormat(recordFormat)
                         .setBufferSizeInBytes(recordBufSize)
                         .build()
@@ -186,59 +185,60 @@ class AudioLatencyEngine(
                 }
             }
 
-            // Start Audio Track
             audioTrack.play()
 
-            // Concurrently prepare recording
-            val recordLengthSamples = sampleRate / 2 // 500ms
+            val recordLengthSamples = (sampleRate * 0.55).toInt()
             val recordedData = ShortArray(recordLengthSamples)
+            val recordingReady = CompletableDeferred<Unit>()
 
             val recordJob = scope.launch(Dispatchers.IO) {
                 if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
                     try {
                         audioRecord.startRecording()
+                        // Read warm-up chunk to ensure ADC pipeline is actively capturing
+                        val warmup = ShortArray(256)
+                        audioRecord.read(warmup, 0, warmup.size)
+                        recordingReady.complete(Unit)
+
                         var offset = 0
-                        while (offset < recordLengthSamples) {
+                        while (offset < recordLengthSamples && isActive) {
                             val read = audioRecord.read(recordedData, offset, recordLengthSamples - offset)
                             if (read > 0) offset += read else break
                         }
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        recordingReady.complete(Unit)
                     }
+                } else {
+                    recordingReady.complete(Unit)
                 }
             }
 
-            // Send Chirp Burst with leading silence padding
-            val leadSilence = ShortArray(480) // 10ms lead
-            audioTrack.write(leadSilence, 0, leadSilence.size)
+            // Wait until AudioRecord is actively capturing before firing chirp
+            recordingReady.await()
 
-            val txNano = System.nanoTime()
+            val leadSilence = ShortArray(leadSilenceSamples)
+            audioTrack.write(leadSilence, 0, leadSilence.size)
             audioTrack.write(chirpSignal, 0, chirpSignal.size)
 
-            // Tail padding to flush stream
             val tailSilence = ShortArray(trackBufSize / 2)
             audioTrack.write(tailSilence, 0, tailSilence.size)
 
-            // Wait for recording to complete (max 600ms)
             recordJob.join()
 
-            // 4. Acoustic Matched Filter or Driver Timestamp Analysis
             var detectedLatencyMs = 0.0
-
             if (hasMicPermission && audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
                 detectedLatencyMs = analyzeAcousticArrival(recordedData)
             }
 
-            // If mic didn't capture return (e.g. sealed in-ear headphones or quiet volume),
-            // calculate the driver transit delay via AudioTimestamp / HAL buffer metrics
             if (detectedLatencyMs <= 0.0) {
-                val halBufferLatencyMs = (trackBufSize.toDouble() / (sampleRate * 2.0)) * 1000.0
+                // Query OS AudioManager output latency property if echo wasn't audible (e.g., sealed IEMs)
+                val framesPerBuffer = audioManager?.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER)?.toIntOrNull() ?: 256
+                val halBufferMs = (framesPerBuffer.toDouble() / sampleRate.toDouble()) * 1000.0
+                val trackBufferMs = (trackBufSize.toDouble() / (sampleRate * 2.0)) * 1000.0
                 detectedLatencyMs = if (_telemetrySummary.value.isBluetooth) {
-                    // Standard Bluetooth A2DP transport buffer + packet transit
-                    145.0 + (halBufferLatencyMs * 0.5)
+                    135.0 + trackBufferMs + halBufferMs
                 } else {
-                    // Direct DAC / Wired / Internal Speaker
-                    24.0 + halBufferLatencyMs
+                    18.0 + trackBufferMs + halBufferMs
                 }
             }
 
@@ -247,9 +247,7 @@ class AudioLatencyEngine(
 
         } catch (e: Exception) {
             e.printStackTrace()
-            val fallback = if (_telemetrySummary.value.isBluetooth) 152.0 else 28.5
-            recordPingResult(fallback)
-            return@withContext fallback
+            return@withContext 0.0
         } finally {
             try {
                 audioTrack?.stop()
@@ -265,27 +263,27 @@ class AudioLatencyEngine(
     private fun analyzeAcousticArrival(captured: ShortArray): Double {
         if (captured.isEmpty()) return 0.0
 
-        // Push captured audio envelope to waveform queue for UI
         recordedWaveform.clear()
         val decimate = max(1, captured.size / 200)
         for (i in captured.indices step decimate) {
             recordedWaveform.addLast(captured[i].toFloat() / Short.MAX_VALUE)
         }
 
-        // Matched filter cross-correlation
-        val searchWindow = min(captured.size - chirpSampleCount, (sampleRate * 0.45).toInt())
+        val searchWindow = min(captured.size - chirpSampleCount, (sampleRate * 0.48).toInt())
         var maxCorr = 0.0
+        var totalEnergy = 0.0
         var bestLag = -1
 
         val correlationPoints = mutableListOf<Float>()
-        val step = 4
+        val step = 2
 
         for (lag in 0 until searchWindow step step) {
             var sum = 0.0
-            for (i in 0 until chirpSampleCount step 8) {
+            for (i in 0 until chirpSampleCount step 4) {
                 sum += (chirpSignal[i].toDouble() * captured[lag + i].toDouble())
             }
             val absSum = abs(sum)
+            totalEnergy += absSum
             if (absSum > maxCorr) {
                 maxCorr = absSum
                 bestLag = lag
@@ -298,9 +296,13 @@ class AudioLatencyEngine(
         correlationWaveform.clear()
         correlationPoints.forEach { correlationWaveform.addLast(it) }
 
-        if (bestLag > 0 && maxCorr > 5e7) {
-            val ms = (bestLag.toDouble() / sampleRate.toDouble()) * 1000.0
-            if (ms in 10.0..500.0) {
+        val meanCorr = if (searchWindow > 0) totalEnergy / (searchWindow / step) else 1.0
+        val peakToAverageRatio = if (meanCorr > 0) maxCorr / meanCorr else 0.0
+
+        if (bestLag > leadSilenceSamples && maxCorr > 3.5e7 && peakToAverageRatio > 3.2) {
+            val netLagSamples = (bestLag - leadSilenceSamples).coerceAtLeast(1)
+            val ms = (netLagSamples.toDouble() / sampleRate.toDouble()) * 1000.0
+            if (ms in 8.0..480.0) {
                 return ms
             }
         }
@@ -308,6 +310,7 @@ class AudioLatencyEngine(
     }
 
     private fun recordPingResult(latencyMs: Double) {
+        if (latencyMs <= 0.0) return
         synchronized(latencyHistory) {
             latencyHistory.addLast(latencyMs)
             if (latencyHistory.size > 30) latencyHistory.removeFirst()

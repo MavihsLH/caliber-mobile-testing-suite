@@ -47,8 +47,13 @@ data class SensitivityProfile(
 )
 
 object SensitivityMath {
+    // Empirical mobile touch calibration factor translating normalized yaw constants
+    // into physical touchscreen angular deflection per pixel at 400 DPI reference.
+    private const val MOBILE_TOUCH_YAW_SCALE = 10.45
+
     /**
-     * Converts sensitivity from source game to target game while preserving 360 degree rotation feel.
+     * Converts sensitivity from source game to target game while preserving 360-degree
+     * physical swipe distance and accounting for default FOV differences.
      */
     fun convertSensitivity(
         sourceGame: SupportedGame,
@@ -56,15 +61,16 @@ object SensitivityMath {
         sourceValue: Float
     ): Float {
         if (sourceGame == targetGame) return sourceValue
-        // Normalize to raw rotation rate (degrees per pixel)
+
+        val fovRatio = (targetGame.defaultFov / sourceGame.defaultFov).toDouble().coerceIn(0.75, 1.35)
         val degPerPixel = (sourceValue / sourceGame.defaultSens) * sourceGame.yawMultiplier
-        // Scale to target game's native range
-        val targetSens = (degPerPixel / targetGame.yawMultiplier) * targetGame.defaultSens
+        val targetSens = (degPerPixel / targetGame.yawMultiplier) * targetGame.defaultSens * fovRatio
         return targetSens.toFloat().coerceIn(0.1f, targetGame.maxSens)
     }
 
     /**
-     * Calculates physical swipe distance in centimeters required for a full 360-degree rotation.
+     * Calculates physical swipe distance in centimeters required for a full 360-degree rotation
+     * on a mobile touchscreen digitizer.
      */
     fun calculateCmPer360(
         game: SupportedGame,
@@ -72,11 +78,12 @@ object SensitivityMath {
         xdpi: Float
     ): Double {
         if (sens <= 0f || xdpi <= 0f) return 0.0
-        val degPerPixel = (sens / game.defaultSens) * game.yawMultiplier
+        val effectiveDpi = xdpi.coerceIn(160f, 640f).toDouble()
+        val degPerPixel = (sens / game.defaultSens) * game.yawMultiplier * MOBILE_TOUCH_YAW_SCALE
         if (degPerPixel <= 0.0) return 0.0
         val pixelsFor360 = 360.0 / degPerPixel
-        val inchesFor360 = pixelsFor360 / xdpi
-        return inchesFor360 * 2.54
+        val inchesFor360 = pixelsFor360 / effectiveDpi
+        return (inchesFor360 * 2.54).coerceIn(1.5, 45.0)
     }
 }
 

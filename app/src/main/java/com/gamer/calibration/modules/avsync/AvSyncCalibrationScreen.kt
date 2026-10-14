@@ -8,17 +8,12 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.SystemClock
 import android.widget.Toast
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,18 +21,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -49,18 +39,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -73,8 +61,6 @@ import com.gamer.calibration.ui.theme.MinimalTypography
 import com.gamer.calibration.ui.theme.TelemetryFonts
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.sin
 
 @Composable
@@ -84,25 +70,25 @@ fun AvSyncCalibrationScreen(
 ) {
     KeepScreenOn()
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
 
     var isRunning by remember { mutableStateOf(false) }
-    var beatPeriodMs by remember { mutableLongStateOf(1000L) } // 60 BPM
+    var isBeatFlashing by remember { mutableStateOf(false) }
+    val beatPeriodMs = 800L // 75 BPM rhythm cadence
     var lastBeatTimestamp by remember { mutableLongStateOf(0L) }
 
     val tapOffsets = remember { mutableStateListOf<Long>() }
     var lastOffsetMs by remember { mutableLongStateOf(0L) }
 
-    // Synthesized Sound Blip
     val audioTrack = remember {
         val sampleRate = 44100
-        val durationMs = 35
+        val durationMs = 30
         val numSamples = (durationMs * sampleRate) / 1000
         val buffer = ShortArray(numSamples)
-        val freq = 1200.0 // 1200 Hz high frequency click
+        val freq = 1400.0
         for (i in 0 until numSamples) {
+            val env = 1.0 - (i.toDouble() / numSamples)
             val angle = 2.0 * Math.PI * i * freq / sampleRate
-            buffer[i] = (sin(angle) * Short.MAX_VALUE * 0.8).toInt().toShort()
+            buffer[i] = (env * sin(angle) * Short.MAX_VALUE * 0.85).toInt().toShort()
         }
 
         val track = AudioTrack.Builder()
@@ -143,26 +129,30 @@ fun AvSyncCalibrationScreen(
         } catch (ignored: Exception) {}
     }
 
-    // Metronome Loop
     LaunchedEffect(isRunning) {
         if (isRunning) {
+            delay(400L) // Brief lead-in after starting so start tap doesn't collide with Beat #1
             while (isActive && isRunning) {
                 lastBeatTimestamp = SystemClock.uptimeMillis()
+                isBeatFlashing = true
                 playClick()
-                delay(beatPeriodMs)
+                delay(90L)
+                isBeatFlashing = false
+                delay(beatPeriodMs - 90L)
             }
+        } else {
+            isBeatFlashing = false
         }
     }
 
-    fun handleTap() {
+    fun handleTapDown(downUptimeMs: Long) {
         if (!isRunning) {
             isRunning = true
             return
         }
+        if (lastBeatTimestamp == 0L) return
 
-        val now = SystemClock.uptimeMillis()
-        val elapsedSinceBeat = now - lastBeatTimestamp
-        // Nearest beat offset (-500ms to +500ms)
+        val elapsedSinceBeat = downUptimeMs - lastBeatTimestamp
         val offset = if (elapsedSinceBeat > beatPeriodMs / 2) {
             elapsedSinceBeat - beatPeriodMs
         } else {
@@ -180,12 +170,17 @@ fun AvSyncCalibrationScreen(
         tapOffsets.average().toLong()
     } else 0L
 
+    val flashScale by animateFloatAsState(
+        targetValue = if (isBeatFlashing) 1.12f else 1.0f,
+        animationSpec = tween(durationMillis = if (isBeatFlashing) 40 else 180),
+        label = "beat_flash_scale"
+    )
+
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MinimalGlassColors.Background)
     ) {
-        // Top Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -210,15 +205,26 @@ fun AvSyncCalibrationScreen(
                     color = MinimalGlassColors.TextPrimary
                 )
                 Text(
-                    text = "Measure audio delay offset for rhythm games and emulators",
+                    text = "Measure audio-visual offset for rhythm games & emulators",
                     style = MinimalTypography.labelSmall.copy(fontSize = 11.sp),
                     color = MinimalGlassColors.TextMuted
                 )
             }
 
-            IconButton(onClick = {
-                isRunning = !isRunning
-            }) {
+            if (tapOffsets.isNotEmpty()) {
+                IconButton(onClick = {
+                    tapOffsets.clear()
+                    lastOffsetMs = 0L
+                }) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Reset samples",
+                        tint = MinimalGlassColors.TextSecondary
+                    )
+                }
+            }
+
+            IconButton(onClick = { isRunning = !isRunning }) {
                 Icon(
                     imageVector = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
                     contentDescription = if (isRunning) "Stop" else "Start",
@@ -227,16 +233,16 @@ fun AvSyncCalibrationScreen(
             }
         }
 
-        // Tap Zone & Visual Metronome
         Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { handleTap() }
-                )
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        handleTapDown(down.uptimeMillis)
+                    }
+                }
                 .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -244,18 +250,22 @@ fun AvSyncCalibrationScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                // Visual Beat Flash Target
                 Box(
                     modifier = Modifier
                         .size(170.dp)
+                        .scale(flashScale)
                         .clip(CircleShape)
                         .background(
-                            if (isRunning) MinimalGlassColors.PurpleLight else MinimalGlassColors.BackgroundSubtle
+                            when {
+                                isBeatFlashing -> MinimalGlassColors.Purple.copy(alpha = 0.40f)
+                                isRunning -> MinimalGlassColors.PurpleLight
+                                else -> MinimalGlassColors.BackgroundSubtle
+                            }
                         )
                         .border(
-                            2.dp,
-                            if (isRunning) MinimalGlassColors.Purple else MinimalGlassColors.GlassBorder,
-                            CircleShape
+                            width = if (isBeatFlashing) 4.dp else 2.dp,
+                            color = if (isRunning) MinimalGlassColors.Purple else MinimalGlassColors.GlassBorder,
+                            shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -272,7 +282,13 @@ fun AvSyncCalibrationScreen(
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = if (!isRunning) "TAP TO START" else if (tapOffsets.isEmpty()) "TAP ON THE BEAT" else "${if (averageOffsetMs >= 0) "+$averageOffsetMs" else "$averageOffsetMs"} MS",
+                        text = if (!isRunning) {
+                            "TAP TO START"
+                        } else if (tapOffsets.isEmpty()) {
+                            "TAP ON THE BEAT"
+                        } else {
+                            "${if (averageOffsetMs >= 0) "+$averageOffsetMs" else "$averageOffsetMs"} MS"
+                        },
                         style = TelemetryFonts.Hero.copy(
                             fontSize = if (tapOffsets.isNotEmpty()) 36.sp else 18.sp,
                             color = if (tapOffsets.isNotEmpty()) MinimalGlassColors.Purple else MinimalGlassColors.TextPrimary
@@ -281,11 +297,11 @@ fun AvSyncCalibrationScreen(
 
                     Text(
                         text = if (!isRunning) {
-                            "Tap when you hear the click pulse"
+                            "Tap in rhythm with the audio click & purple flash"
                         } else if (tapOffsets.size < 4) {
                             "Keep tapping along with the beat (${tapOffsets.size}/8 taps)"
                         } else {
-                            "Audio delay offset calculated from your taps"
+                            "Recommended audio offset for rhythm games & emulators"
                         },
                         style = MinimalTypography.bodyMedium.copy(fontSize = 12.sp),
                         color = MinimalGlassColors.TextSecondary
@@ -308,7 +324,6 @@ fun AvSyncCalibrationScreen(
             }
         }
 
-        // Bottom Stats Footer
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -323,7 +338,7 @@ fun AvSyncCalibrationScreen(
             ) {
                 TelemetryValue(
                     label = "LAST OFFSET",
-                    value = if (lastOffsetMs != 0L) "${if (lastOffsetMs > 0) "+$lastOffsetMs" else "$lastOffsetMs"}" else "--",
+                    value = if (tapOffsets.isNotEmpty()) "${if (lastOffsetMs > 0) "+$lastOffsetMs" else "$lastOffsetMs"}" else "--",
                     unit = "ms"
                 )
                 TelemetryValue(

@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -15,11 +16,13 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.gamer.calibration.MainActivity
 import com.gamer.calibration.R
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 
 class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
@@ -45,8 +48,20 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
     companion object {
         const val CHANNEL_ID = "apex_overlay_channel"
         const val NOTIFICATION_ID = 1001
-        var isRunning = false
+
+        private val _isRunningFlow = MutableStateFlow(false)
+        val isRunningFlow: StateFlow<Boolean> = _isRunningFlow.asStateFlow()
+
+        var isRunning: Boolean
+            get() = _isRunningFlow.value
+            set(value) {
+                _isRunningFlow.value = value
+            }
+
+        @Volatile
         var sharedTouchHz: Double = 0.0
+
+        @Volatile
         var sharedControllerHz: Double = 0.0
     }
 
@@ -56,7 +71,21 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
         super.onCreate()
         isRunning = true
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            }
+        } catch (e: Exception) {
+            try {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            } catch (ignored: Exception) {}
+        }
         initOverlayWindow()
         Choreographer.getInstance().postFrameCallback(this)
     }
@@ -65,10 +94,10 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Apex Gaming Telemetry Overlay",
+                "Caliber Gaming Telemetry Overlay",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Real-time floating gaming stats over apps"
+                description = "Real-time display VSYNC & input polling HUD"
             }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
@@ -83,7 +112,7 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Telemetry Overlay Active")
+            .setContentTitle("Caliber Telemetry HUD Active")
             .setContentText("Drag to bottom of screen or tap ✕ to close")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
@@ -93,7 +122,6 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
 
     private fun initOverlayWindow() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
         val displayMetrics = resources.displayMetrics
         val screenHeight = displayMetrics.heightPixels
 
@@ -117,12 +145,11 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
             y = 120
         }
 
-        // Clean frosted container
         val container = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.HORIZONTAL
             setPadding(20, 12, 16, 12)
             val borderDrawable = android.graphics.drawable.GradientDrawable().apply {
-                setColor(android.graphics.Color.parseColor("#E60F172A")) // Translucent deep slate
+                setColor(android.graphics.Color.parseColor("#E60F172A"))
                 setStroke(2, android.graphics.Color.parseColor("#334155"))
                 cornerRadius = 24f
             }
@@ -152,11 +179,10 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
             return valText
         }
 
-        fpsTextView = createStatPill("FPS", "60.0", "#10B981")
+        fpsTextView = createStatPill("VSYNC", "60.0", "#10B981")
         touchHzTextView = createStatPill("TOUCH", "0 Hz", "#38BDF8")
         padHzTextView = createStatPill("PAD", "0 Hz", "#F59E0B")
 
-        // Close 'X' button
         val closeBtn = TextView(this).apply {
             text = " ✕ "
             textSize = 13f
@@ -168,7 +194,6 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
         }
         container.addView(closeBtn)
 
-        // Draggable touch handler with Drag-to-Bottom-to-Kill
         container.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -182,10 +207,9 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
                     params?.x = initialX + (event.rawX - initialTouchX).toInt()
                     params?.y = initialY + (event.rawY - initialTouchY).toInt()
 
-                    // If dragged to bottom 15% of screen, highlight red to signal release to dismiss
                     if (event.rawY > (screenHeight * 0.85f)) {
                         (container.background as? android.graphics.drawable.GradientDrawable)?.apply {
-                            setColor(android.graphics.Color.parseColor("#E6EF4444")) // Red alert
+                            setColor(android.graphics.Color.parseColor("#E6EF4444"))
                             setStroke(2, android.graphics.Color.WHITE)
                         }
                     } else {
@@ -199,7 +223,6 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    // Check if dropped near the bottom to kill
                     if (event.rawY > (screenHeight * 0.85f)) {
                         stopSelf()
                     }
@@ -236,7 +259,11 @@ class FloatingTelemetryService : Service(), Choreographer.FrameCallback {
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
-        overlayView?.let { windowManager?.removeView(it) }
+        overlayView?.let {
+            try {
+                windowManager?.removeView(it)
+            } catch (ignored: Exception) {}
+        }
         overlayView = null
     }
 }

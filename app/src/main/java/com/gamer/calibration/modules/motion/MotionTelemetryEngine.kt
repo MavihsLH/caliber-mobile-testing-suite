@@ -6,7 +6,6 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import com.gamer.calibration.domain.model.MotionTelemetrySummary
-import com.gamer.calibration.domain.model.SensorSample
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,7 +21,7 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 class MotionTelemetryEngine(
-    context: Context,
+    private val context: Context,
     private val scope: CoroutineScope
 ) : SensorEventListener {
 
@@ -30,10 +29,12 @@ class MotionTelemetryEngine(
     private val gyroSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
+    private val motionPrefs = context.getSharedPreferences("caliber_motion_prefs", Context.MODE_PRIVATE)
+    private val settingsPrefs = context.getSharedPreferences("apex_calibrate_prefs", Context.MODE_PRIVATE)
+
     private val _telemetrySummary = MutableStateFlow(MotionTelemetrySummary())
     val telemetrySummary: StateFlow<MotionTelemetrySummary> = _telemetrySummary.asStateFlow()
 
-    // High speed lock-free waveform buffers (up to 300 samples for live multi-channel graphs)
     val gyroHistoryX = ConcurrentLinkedDeque<Float>()
     val gyroHistoryY = ConcurrentLinkedDeque<Float>()
     val gyroHistoryZ = ConcurrentLinkedDeque<Float>()
@@ -49,13 +50,11 @@ class MotionTelemetryEngine(
     private var currentGyroHz = 0.0
     private var currentAccelHz = 0.0
 
-    // Calibration Offsets (Zero-point drift bias tare)
-    private var offsetX = 0f
-    private var offsetY = 0f
-    private var offsetZ = 0f
-    private var isCalibrated = false
+    private var offsetX = motionPrefs.getFloat("offset_x", 0f)
+    private var offsetY = motionPrefs.getFloat("offset_y", 0f)
+    private var offsetZ = motionPrefs.getFloat("offset_z", 0f)
+    private var isCalibrated = motionPrefs.getBoolean("is_calibrated", false)
 
-    // Rolling window for variance / noise floor calculation
     private val recentGyroMagnitudes = ArrayDeque<Float>(100)
 
     private var latestGyro = floatArrayOf(0f, 0f, 0f)
@@ -144,7 +143,7 @@ class MotionTelemetryEngine(
                     offsetZ = offsetZ
                 )
 
-                delay(33) // Decoupled ~30Hz update to Compose
+                delay(33)
             }
         }
     }
@@ -186,14 +185,19 @@ class MotionTelemetryEngine(
         }
     }
 
-    /**
-     * Tares zero-point drift by capturing current resting values as baseline bias.
-     */
+    fun isAutoTareEnabled(): Boolean = settingsPrefs.getBoolean("auto_tare_enabled", true)
+
     fun calibrateZeroPoint() {
         offsetX = latestGyro[0]
         offsetY = latestGyro[1]
         offsetZ = latestGyro[2]
         isCalibrated = true
+        motionPrefs.edit()
+            .putFloat("offset_x", offsetX)
+            .putFloat("offset_y", offsetY)
+            .putFloat("offset_z", offsetZ)
+            .putBoolean("is_calibrated", true)
+            .apply()
     }
 
     fun resetCalibration() {
@@ -201,5 +205,11 @@ class MotionTelemetryEngine(
         offsetY = 0f
         offsetZ = 0f
         isCalibrated = false
+        motionPrefs.edit()
+            .putFloat("offset_x", 0f)
+            .putFloat("offset_y", 0f)
+            .putFloat("offset_z", 0f)
+            .putBoolean("is_calibrated", false)
+            .apply()
     }
 }

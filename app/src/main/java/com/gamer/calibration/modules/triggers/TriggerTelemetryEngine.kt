@@ -1,8 +1,8 @@
 package com.gamer.calibration.modules.triggers
 
+import android.os.SystemClock
 import android.view.KeyEvent
 import com.gamer.calibration.domain.model.HardwareTriggersSummary
-import com.gamer.calibration.domain.model.TriggerState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -25,7 +25,7 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
     private val totalClicksMap = ConcurrentHashMap<Int, Int>()
 
     private var peakCps = 0.0
-    private var lastActuationLatency = 0L
+    private var lastDispatchLatencyMs = 0L
 
     private var monitorJob: Job? = null
 
@@ -38,7 +38,7 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
         monitorJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 updateCpsMetrics()
-                delay(50) // 20Hz update
+                delay(50)
             }
         }
     }
@@ -58,56 +58,105 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
 
         if (!isTargetKey) return false
 
-        val now = System.currentTimeMillis()
+        val nowWall = System.currentTimeMillis()
+        val nowUptime = SystemClock.uptimeMillis()
 
         if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-            pressDownTimes[keyCode] = now
+            pressDownTimes[keyCode] = nowWall
+            // Measure true kernel-to-app key dispatch latency on ACTION_DOWN
+            val dispatchLag = (nowUptime - event.eventTime).coerceIn(1L, 250L)
+            lastDispatchLatencyMs = dispatchLag
+
             val queue = clickTimestamps.getOrPut(keyCode) { ArrayDeque() }
             synchronized(queue) {
-                queue.addLast(now)
+                queue.addLast(nowWall)
             }
             totalClicksMap[keyCode] = (totalClicksMap[keyCode] ?: 0) + 1
-            updateSingleTriggerState(keyCode, isPressed = true, durationMs = 0L)
+            updateSingleTriggerState(
+                keyCode = keyCode,
+                isPressed = true,
+                holdDurationMs = 0L,
+                dispatchLatencyMs = dispatchLag
+            )
             return true
         } else if (event.action == KeyEvent.ACTION_UP) {
-            val downTime = pressDownTimes.remove(keyCode) ?: now
-            val latency = now - downTime
-            lastActuationLatency = latency
-            updateSingleTriggerState(keyCode, isPressed = false, durationMs = latency)
+            val downTime = pressDownTimes.remove(keyCode) ?: nowWall
+            val holdDuration = (nowWall - downTime).coerceAtLeast(1L)
+            updateSingleTriggerState(
+                keyCode = keyCode,
+                isPressed = false,
+                holdDurationMs = holdDuration,
+                dispatchLatencyMs = lastDispatchLatencyMs
+            )
             return true
         }
 
         return false
     }
 
-    private fun updateSingleTriggerState(keyCode: Int, isPressed: Boolean, durationMs: Long) {
+    private fun updateSingleTriggerState(
+        keyCode: Int,
+        isPressed: Boolean,
+        holdDurationMs: Long,
+        dispatchLatencyMs: Long
+    ) {
         val current = _triggersSummary.value
         val clicks = totalClicksMap[keyCode] ?: 0
 
         _triggersSummary.value = when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_L1 -> current.copy(
-                l1Trigger = current.l1Trigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                l1Trigger = current.l1Trigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             KeyEvent.KEYCODE_BUTTON_R1 -> current.copy(
-                r1Trigger = current.r1Trigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                r1Trigger = current.r1Trigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             KeyEvent.KEYCODE_BUTTON_L2 -> current.copy(
-                l2Trigger = current.l2Trigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                l2Trigger = current.l2Trigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             KeyEvent.KEYCODE_BUTTON_R2 -> current.copy(
-                r2Trigger = current.r2Trigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                r2Trigger = current.r2Trigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             KeyEvent.KEYCODE_VOLUME_UP -> current.copy(
-                volumeUpTrigger = current.volumeUpTrigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                volumeUpTrigger = current.volumeUpTrigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             KeyEvent.KEYCODE_VOLUME_DOWN -> current.copy(
-                volumeDownTrigger = current.volumeDownTrigger.copy(isPressed = isPressed, pressDurationMs = durationMs, totalClicks = clicks),
-                lastTriggerLatencyMs = if (!isPressed) durationMs else current.lastTriggerLatencyMs
+                volumeDownTrigger = current.volumeDownTrigger.copy(
+                    isPressed = isPressed,
+                    pressDurationMs = holdDurationMs,
+                    lastActuationMs = dispatchLatencyMs,
+                    totalClicks = clicks
+                ),
+                lastTriggerLatencyMs = dispatchLatencyMs
             )
             else -> current
         }
@@ -115,7 +164,6 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
 
     private fun updateCpsMetrics() {
         val now = System.currentTimeMillis()
-        var maxCurrentCps = 0.0
 
         fun calculateCps(keyCode: Int): Double {
             val queue = clickTimestamps[keyCode] ?: return 0.0
@@ -134,9 +182,10 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
         val vUpCps = calculateCps(KeyEvent.KEYCODE_VOLUME_UP)
         val vDownCps = calculateCps(KeyEvent.KEYCODE_VOLUME_DOWN)
 
-        maxCurrentCps = maxOf(l1Cps, r1Cps, l2Cps, r2Cps, vUpCps, vDownCps)
+        val maxCurrentCps = maxOf(l1Cps, r1Cps, l2Cps, r2Cps, vUpCps, vDownCps)
         peakCps = max(peakCps, maxCurrentCps)
 
+        val overlayRunning = FloatingTelemetryService.isRunning
         val current = _triggersSummary.value
         _triggersSummary.value = current.copy(
             l1Trigger = current.l1Trigger.copy(clicksPerSecond = l1Cps),
@@ -145,11 +194,13 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
             r2Trigger = current.r2Trigger.copy(clicksPerSecond = r2Cps),
             volumeUpTrigger = current.volumeUpTrigger.copy(clicksPerSecond = vUpCps),
             volumeDownTrigger = current.volumeDownTrigger.copy(clicksPerSecond = vDownCps),
-            peakClicksPerSecond = peakCps
+            peakClicksPerSecond = peakCps,
+            isOverlayActive = overlayRunning
         )
     }
 
     fun setOverlayActive(active: Boolean) {
+        FloatingTelemetryService.isRunning = active
         _triggersSummary.value = _triggersSummary.value.copy(isOverlayActive = active)
     }
 
@@ -158,7 +209,7 @@ class TriggerTelemetryEngine(private val scope: CoroutineScope) {
         clickTimestamps.clear()
         totalClicksMap.clear()
         peakCps = 0.0
-        lastActuationLatency = 0L
-        _triggersSummary.value = HardwareTriggersSummary(isOverlayActive = _triggersSummary.value.isOverlayActive)
+        lastDispatchLatencyMs = 0L
+        _triggersSummary.value = HardwareTriggersSummary(isOverlayActive = FloatingTelemetryService.isRunning)
     }
 }

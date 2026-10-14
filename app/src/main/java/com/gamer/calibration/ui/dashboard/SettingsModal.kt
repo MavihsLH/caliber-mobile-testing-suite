@@ -61,7 +61,6 @@ fun SettingsModal(
     val prefs = remember { context.getSharedPreferences("apex_calibrate_prefs", Context.MODE_PRIVATE) }
     var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var autoTareEnabled by remember { mutableStateOf(prefs.getBoolean("auto_tare_enabled", true)) }
-    var soundCuesEnabled by remember { mutableStateOf(prefs.getBoolean("sound_cues_enabled", false)) }
     var keepScreenAwake by remember { mutableStateOf(prefs.getBoolean("keep_screen_awake", true)) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -236,17 +235,7 @@ fun SettingsModal(
                     }
                 )
 
-                HairlineDivider()
 
-                SettingsSwitchRow(
-                    title = "Acoustic Test Tones",
-                    subtitle = "Play sound chirp during latency test",
-                    checked = soundCuesEnabled,
-                    onCheckedChange = { checked ->
-                        soundCuesEnabled = checked
-                        prefs.edit().putBoolean("sound_cues_enabled", checked).apply()
-                    }
-                )
 
                 HairlineDivider()
 

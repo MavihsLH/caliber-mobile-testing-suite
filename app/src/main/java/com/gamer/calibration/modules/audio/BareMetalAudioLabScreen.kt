@@ -1,5 +1,11 @@
 package com.gamer.calibration.modules.audio
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,18 +19,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -41,25 +41,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.gamer.calibration.ui.components.CyberButton
-import com.gamer.calibration.ui.components.TelemetryValue
+import com.gamer.calibration.ui.components.KeepScreenOn
+import com.gamer.calibration.ui.components.LabBadge
+import com.gamer.calibration.ui.components.LabTopBar
 import com.gamer.calibration.ui.theme.MinimalGlassColors
 import com.gamer.calibration.ui.theme.MinimalTypography
 import kotlinx.coroutines.launch
 import java.util.Locale
-
-import android.content.res.Configuration
-import androidx.compose.ui.platform.LocalConfiguration
-import com.gamer.calibration.ui.components.KeepScreenOn
-import com.gamer.calibration.ui.components.LabBadge
-import com.gamer.calibration.ui.components.LabTopBar
 
 @Composable
 fun BareMetalAudioLabScreen(
@@ -71,10 +69,29 @@ fun BareMetalAudioLabScreen(
 ) {
     KeepScreenOn()
 
+    val context = LocalContext.current
     val telemetry by audioEngine.telemetrySummary.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val scope = rememberCoroutineScope()
     var isContinuousRunning by remember { mutableStateOf(false) }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        scope.launch { audioEngine.executeAcousticPing() }
+    }
+
+    fun triggerPingWithPermissionCheck() {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            scope.launch { audioEngine.executeAcousticPing() }
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     DisposableEffect(Unit) {
         audioEngine.detectAudioRouting()
@@ -104,13 +121,16 @@ fun BareMetalAudioLabScreen(
             onRotate = onToggleOrientation,
             onReset = { audioEngine.resetStats() },
             onFinish = {
-                val latency = if (telemetry.lastLatencyMs > 0) telemetry.lastLatencyMs else 32.0
-                onFinish(latency, telemetry.audioRoutingDevice)
+                if (telemetry.totalPingsConducted == 0 || telemetry.lastLatencyMs <= 0.0) {
+                    Toast.makeText(context, "Run at least 1 acoustic ping before saving", Toast.LENGTH_SHORT).show()
+                } else {
+                    onFinish(telemetry.averageLatencyMs, telemetry.audioRoutingDevice)
+                }
             },
             badges = {
                 LabBadge(
                     label = "Acoustic Delay",
-                    value = String.format(Locale.US, "%.1f", telemetry.lastLatencyMs),
+                    value = if (telemetry.lastLatencyMs > 0) String.format(Locale.US, "%.1f", telemetry.lastLatencyMs) else "--",
                     unit = "ms",
                     valueColor = when {
                         telemetry.lastLatencyMs == 0.0 -> MinimalGlassColors.TextMuted
@@ -121,12 +141,11 @@ fun BareMetalAudioLabScreen(
                 )
                 LabBadge(
                     label = "Output",
-                    value = telemetry.audioRoutingDevice.take(16)
+                    value = telemetry.audioRoutingDevice.take(18)
                 )
             }
         )
 
-        // Instructions Ribbon
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -145,14 +164,13 @@ fun BareMetalAudioLabScreen(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Keep your phone unmute in a relatively quiet room. Tap 'Test Acoustic Delay' to fire a quick sound burst and calculate exact delay.",
+                    text = "Turn up media volume in a quiet room. Place earbuds near the bottom microphone or use speaker to measure round-trip acoustic delay.",
                     style = MinimalTypography.bodyMedium,
                     color = MinimalGlassColors.TextSecondary
                 )
             }
         }
 
-        // Workspace
         if (isLandscape) {
             Row(
                 modifier = Modifier
@@ -161,7 +179,6 @@ fun BareMetalAudioLabScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Left: Acoustic Waveform Oscilloscope
                 Box(
                     modifier = Modifier
                         .weight(0.68f)
@@ -174,7 +191,6 @@ fun BareMetalAudioLabScreen(
                     AudioWaveformContent(audioEngine, frameTick)
                 }
 
-                // Right: Controls & Reference Benchmarks
                 Box(
                     modifier = Modifier
                         .weight(0.32f)
@@ -187,7 +203,7 @@ fun BareMetalAudioLabScreen(
                     AudioControlsContent(
                         telemetry = telemetry,
                         isContinuousRunning = isContinuousRunning,
-                        onTriggerPing = { scope.launch { audioEngine.executeAcousticPing() } },
+                        onTriggerPing = { triggerPingWithPermissionCheck() },
                         onToggleContinuous = {
                             if (isContinuousRunning) {
                                 audioEngine.stopContinuousPing()
@@ -202,7 +218,6 @@ fun BareMetalAudioLabScreen(
                 }
             }
         } else {
-            // Adaptive Vertical Layout for Portrait
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -210,7 +225,6 @@ fun BareMetalAudioLabScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Top: Waveform Oscilloscope (58% height)
                 Box(
                     modifier = Modifier
                         .weight(0.58f)
@@ -223,7 +237,6 @@ fun BareMetalAudioLabScreen(
                     AudioWaveformContent(audioEngine, frameTick)
                 }
 
-                // Bottom: Wide Controls & Benchmarks Card (42% height)
                 Box(
                     modifier = Modifier
                         .weight(0.42f)
@@ -236,7 +249,7 @@ fun BareMetalAudioLabScreen(
                     AudioControlsContent(
                         telemetry = telemetry,
                         isContinuousRunning = isContinuousRunning,
-                        onTriggerPing = { scope.launch { audioEngine.executeAcousticPing() } },
+                        onTriggerPing = { triggerPingWithPermissionCheck() },
                         onToggleContinuous = {
                             if (isContinuousRunning) {
                                 audioEngine.stopContinuousPing()
@@ -294,7 +307,6 @@ private fun AudioWaveformContent(
                 strokeWidth = 1f
             )
 
-            // 1. Reference Chirp Template
             val refPoints = audioEngine.referenceChirpWaveform
             if (refPoints.isNotEmpty()) {
                 val refWidth = width * 0.15f
@@ -312,7 +324,6 @@ private fun AudioWaveformContent(
                 )
             }
 
-            // 2. Recorded Microphone Audio
             val recorded = audioEngine.recordedWaveform.toList()
             if (recorded.size > 1) {
                 val step = width / (recorded.size - 1)
@@ -329,7 +340,6 @@ private fun AudioWaveformContent(
                 )
             }
 
-            // 3. Correlation Peak
             val corr = audioEngine.correlationWaveform.toList()
             if (corr.size > 1) {
                 val maxVal = corr.maxOrNull() ?: 1f
@@ -410,7 +420,6 @@ private fun AudioControlsContent(
             }
         }
     } else {
-        // Wide Row layout for Portrait
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,

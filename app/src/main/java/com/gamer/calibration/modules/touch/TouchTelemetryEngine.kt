@@ -1,11 +1,10 @@
 package com.gamer.calibration.modules.touch
 
-import android.os.Build
 import android.view.MotionEvent
 import androidx.compose.ui.geometry.Offset
 import com.gamer.calibration.domain.model.ActivePointer
-import com.gamer.calibration.domain.model.HistoricalTouchPoint
 import com.gamer.calibration.domain.model.TouchTelemetrySummary
+import com.gamer.calibration.modules.triggers.FloatingTelemetryService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,7 +17,6 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -27,14 +25,13 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
     private val _telemetrySummary = MutableStateFlow(TouchTelemetrySummary())
     val telemetrySummary: StateFlow<TouchTelemetrySummary> = _telemetrySummary.asStateFlow()
 
-    // High frequency thread-safe structures for raw drawing (read by Canvas withFrameNanos)
     val activePointers = ConcurrentHashMap<Int, ActivePointer>()
 
-    // Ring buffer of recent delta times (in nanoseconds or milliseconds) for Jitter & Hz
     private val intervalHistory = ArrayDeque<Double>(120)
     private val hzHistory = ArrayDeque<Float>(60)
 
     private var lastEventTimeNano: Long = 0L
+    private var lastTouchEventWallMs: Long = 0L
     private var totalHistoricalPackets: Long = 0L
     private var totalEvents: Long = 0L
     private val totalSamplesCaptured = AtomicLong(0L)
@@ -52,25 +49,26 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
         summaryPublishJob = scope.launch(Dispatchers.Default) {
             while (isActive) {
                 publishTelemetrySnapshot()
-                delay(33) // ~30Hz update rate to Compose State, completely decoupling from 500Hz MotionEvents
+                delay(33)
             }
         }
     }
 
-    /**
-     * Intercept raw MotionEvent. Extracts historical coordinates and calculates hardware digitizer telemetry.
-     */
     fun processMotionEvent(event: MotionEvent) {
         val action = event.actionMasked
         val historySize = event.historySize
         val pointerCount = event.pointerCount
         maxConcurrentPointersRecorded = max(maxConcurrentPointersRecorded, pointerCount)
+        lastTouchEventWallMs = System.currentTimeMillis()
 
         totalEvents++
         totalHistoricalPackets += historySize
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                if (action == MotionEvent.ACTION_DOWN) {
+                    lastEventTimeNano = 0L
+                }
                 val actionIndex = event.actionIndex
                 val pointerId = event.getPointerId(actionIndex)
                 val x = event.getX(actionIndex)
@@ -90,7 +88,6 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
             }
 
             MotionEvent.ACTION_MOVE -> {
-                // 1. Process Historical Coordinates
                 for (h in 0 until historySize) {
                     val histTimeNano = event.getHistoricalEventTime(h) * 1_000_000L
                     recordSampleInterval(histTimeNano)
@@ -117,12 +114,7 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
                     }
                 }
 
-                // 2. Process Current Coordinates
-                val curTimeNano = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    event.eventTime * 1_000_000L
-                } else {
-                    event.eventTime * 1_000_000L
-                }
+                val curTimeNano = event.eventTime * 1_000_000L
                 recordSampleInterval(curTimeNano)
                 totalSamplesCaptured.incrementAndGet()
 
@@ -159,6 +151,7 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 activePointers.clear()
+                lastEventTimeNano = 0L
             }
         }
     }
@@ -166,8 +159,8 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
     private fun recordSampleInterval(sampleTimeNano: Long) {
         if (lastEventTimeNano > 0L) {
             val deltaNano = sampleTimeNano - lastEventTimeNano
-            // Valid sample interval between 0.1ms and 50ms
-            if (deltaNano in 100_000L..50_000_000L) {
+            // Filter out simultaneous multi-pointer batch timestamps (< 0.25ms) and pauses (> 50ms)
+            if (deltaNano in 250_000L..50_000_000L) {
                 val deltaMs = deltaNano / 1_000_000.0
                 synchronized(intervalHistory) {
                     intervalHistory.addLast(deltaMs)
@@ -186,7 +179,11 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
             intervals = intervalHistory.toList()
         }
 
+        val isActivelyMoving = activePointers.isNotEmpty() &&
+                (System.currentTimeMillis() - lastTouchEventWallMs) < 180L
+
         if (intervals.isEmpty()) {
+            FloatingTelemetryService.sharedTouchHz = 0.0
             _telemetrySummary.value = _telemetrySummary.value.copy(
                 instantaneousHz = 0.0,
                 activePointerCount = activePointers.size
@@ -195,15 +192,25 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
         }
 
         val avgIntervalMs = intervals.average()
-        val currentHz = if (avgIntervalMs > 0.0) 1000.0 / avgIntervalMs else 0.0
-        val instIntervalMs = intervals.lastOrNull() ?: avgIntervalMs
-        val instHz = if (instIntervalMs > 0.0) 1000.0 / instIntervalMs else 0.0
+        val rollingAvgHz = if (avgIntervalMs > 0.0) (1000.0 / avgIntervalMs).coerceAtMost(1200.0) else 0.0
 
-        if (currentHz > peakHzRecorded && currentHz < 1500.0) {
-            peakHzRecorded = currentHz
+        // Use a 12-sample short window for live RATE so single-frame OS batching doesn't cause false spikes
+        val recentSlice = intervals.takeLast(12)
+        val recentAvgMs = recentSlice.average()
+        val liveRateHz = if (isActivelyMoving && recentAvgMs > 0.0) {
+            (1000.0 / recentAvgMs).coerceAtMost(1200.0)
+        } else {
+            0.0
         }
 
-        // Standard deviation (Jitter)
+        // Guarantee PEAK is always >= any displayed live RATE
+        val candidatePeak = max(rollingAvgHz, liveRateHz)
+        if (candidatePeak > peakHzRecorded && candidatePeak <= 1200.0) {
+            peakHzRecorded = candidatePeak
+        }
+
+        FloatingTelemetryService.sharedTouchHz = liveRateHz
+
         val variance = intervals.map { (it - avgIntervalMs).pow(2.0) }.average()
         val jitterMs = sqrt(variance)
 
@@ -211,17 +218,19 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
             totalHistoricalPackets.toDouble() / totalEvents.toDouble()
         } else 0.0
 
-        synchronized(hzHistory) {
-            hzHistory.addLast(currentHz.toFloat())
-            if (hzHistory.size > 60) {
-                hzHistory.removeFirst()
+        if (isActivelyMoving) {
+            synchronized(hzHistory) {
+                hzHistory.addLast(liveRateHz.toFloat())
+                if (hzHistory.size > 60) {
+                    hzHistory.removeFirst()
+                }
             }
         }
 
         _telemetrySummary.value = TouchTelemetrySummary(
-            instantaneousHz = instHz,
+            instantaneousHz = liveRateHz,
             peakHz = peakHzRecorded,
-            averageHz = currentHz,
+            averageHz = rollingAvgHz,
             jitterMs = jitterMs,
             activePointerCount = activePointers.size,
             maxConcurrentPointers = maxConcurrentPointersRecorded,
@@ -241,6 +250,7 @@ class TouchTelemetryEngine(private val scope: CoroutineScope) {
         maxConcurrentPointersRecorded = 0
         lastEventTimeNano = 0L
         activePointers.clear()
+        FloatingTelemetryService.sharedTouchHz = 0.0
         _telemetrySummary.value = TouchTelemetrySummary()
     }
 }

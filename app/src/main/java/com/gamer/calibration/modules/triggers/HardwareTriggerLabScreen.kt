@@ -2,6 +2,7 @@ package com.gamer.calibration.modules.triggers
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -18,17 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -39,23 +32,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gamer.calibration.domain.model.TriggerState
-import com.gamer.calibration.ui.components.CyberButton
-import com.gamer.calibration.ui.components.TelemetryValue
+import com.gamer.calibration.ui.components.KeepScreenOn
+import com.gamer.calibration.ui.components.LabBadge
+import com.gamer.calibration.ui.components.LabTopBar
 import com.gamer.calibration.ui.theme.MinimalGlassColors
 import com.gamer.calibration.ui.theme.MinimalTypography
 import com.gamer.calibration.ui.theme.TelemetryFonts
 import java.util.Locale
-
-import android.content.res.Configuration
-import androidx.compose.ui.platform.LocalConfiguration
-import com.gamer.calibration.ui.components.KeepScreenOn
-import com.gamer.calibration.ui.components.LabBadge
-import com.gamer.calibration.ui.components.LabTopBar
 
 @Composable
 fun HardwareTriggerLabScreen(
@@ -69,6 +59,7 @@ fun HardwareTriggerLabScreen(
 
     val context = LocalContext.current
     val telemetry by triggerEngine.triggersSummary.collectAsState()
+    val isOverlayRunning by FloatingTelemetryService.isRunningFlow.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Column(
@@ -78,27 +69,26 @@ fun HardwareTriggerLabScreen(
     ) {
         LabTopBar(
             title = "Gaming Phone Triggers & HUD",
-            subtitle = "Shoulder button actuation & floating in-game stats",
+            subtitle = "Shoulder button actuation & floating telemetry HUD",
             onBack = onBack,
             onRotate = onToggleOrientation,
             onReset = { triggerEngine.resetStats() },
             onFinish = { onFinish(telemetry.lastTriggerLatencyMs, telemetry.peakClicksPerSecond) },
             badges = {
                 LabBadge(
-                    label = "Speed",
+                    label = "Peak Speed",
                     value = String.format(Locale.US, "%.1f", telemetry.peakClicksPerSecond),
                     unit = "CPS",
                     valueColor = MinimalGlassColors.PrimaryBlue
                 )
                 LabBadge(
-                    label = "Actuation Delay",
+                    label = "Dispatch Lag",
                     value = "${telemetry.lastTriggerLatencyMs}",
                     unit = "ms"
                 )
             }
         )
 
-        // Instructions Ribbon
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,14 +107,13 @@ fun HardwareTriggerLabScreen(
                 )
                 Spacer(modifier = Modifier.width(10.dp))
                 Text(
-                    text = "Tap your gaming phone's physical triggers or volume keys 5 times rapidly. Drag the floating overlay to the bottom of your screen anytime to close it.",
+                    text = "Tap your gaming phone's physical shoulder triggers or volume keys rapidly. Drag the floating HUD to the bottom of your screen anytime to dismiss.",
                     style = MinimalTypography.bodyMedium,
                     color = MinimalGlassColors.TextSecondary
                 )
             }
         }
 
-        // Workspace
         if (isLandscape) {
             Row(
                 modifier = Modifier
@@ -133,7 +122,7 @@ fun HardwareTriggerLabScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Left: Shoulder Trigger Buttons
+                // Symmetrical 3x2 Grid including both VOL+ and VOL-
                 Column(
                     modifier = Modifier
                         .weight(0.68f)
@@ -146,12 +135,20 @@ fun HardwareTriggerLabScreen(
                     ) {
                         CleanTriggerCard(
                             trigger = telemetry.l1Trigger,
+                            shortLabel = "L1 SHOULDER",
                             accentColor = MinimalGlassColors.PrimaryBlue,
                             modifier = Modifier.weight(1f)
                         )
                         CleanTriggerCard(
                             trigger = telemetry.r1Trigger,
+                            shortLabel = "R1 SHOULDER",
                             accentColor = MinimalGlassColors.SuccessGreen,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CleanTriggerCard(
+                            trigger = telemetry.volumeUpTrigger,
+                            shortLabel = "VOL+ TRIGGER",
+                            accentColor = MinimalGlassColors.WarningAmber,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -162,23 +159,25 @@ fun HardwareTriggerLabScreen(
                     ) {
                         CleanTriggerCard(
                             trigger = telemetry.l2Trigger,
+                            shortLabel = "L2 TRIGGER",
                             accentColor = MinimalGlassColors.PrimaryBlue,
                             modifier = Modifier.weight(1f)
                         )
                         CleanTriggerCard(
                             trigger = telemetry.r2Trigger,
+                            shortLabel = "R2 TRIGGER",
                             accentColor = MinimalGlassColors.SuccessGreen,
                             modifier = Modifier.weight(1f)
                         )
                         CleanTriggerCard(
-                            trigger = telemetry.volumeUpTrigger,
+                            trigger = telemetry.volumeDownTrigger,
+                            shortLabel = "VOL- TRIGGER",
                             accentColor = MinimalGlassColors.WarningAmber,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                // Right: Floating Telemetry Controls
                 Box(
                     modifier = Modifier
                         .weight(0.32f)
@@ -188,11 +187,10 @@ fun HardwareTriggerLabScreen(
                         .border(1.dp, MinimalGlassColors.GlassBorder, RoundedCornerShape(14.dp))
                         .padding(14.dp)
                 ) {
-                    FloatingOverlayContent(context, triggerEngine)
+                    FloatingOverlayContent(context, triggerEngine, isOverlayRunning)
                 }
             }
         } else {
-            // Adaptive Vertical Layout for Portrait
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -200,10 +198,9 @@ fun HardwareTriggerLabScreen(
                     .padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Top: Trigger Buttons Grid (58% height)
                 Column(
                     modifier = Modifier
-                        .weight(0.58f)
+                        .weight(0.60f)
                         .fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -213,11 +210,13 @@ fun HardwareTriggerLabScreen(
                     ) {
                         CleanTriggerCard(
                             trigger = telemetry.l1Trigger,
+                            shortLabel = "L1 SHOULDER",
                             accentColor = MinimalGlassColors.PrimaryBlue,
                             modifier = Modifier.weight(1f)
                         )
                         CleanTriggerCard(
                             trigger = telemetry.r1Trigger,
+                            shortLabel = "R1 SHOULDER",
                             accentColor = MinimalGlassColors.SuccessGreen,
                             modifier = Modifier.weight(1f)
                         )
@@ -229,33 +228,47 @@ fun HardwareTriggerLabScreen(
                     ) {
                         CleanTriggerCard(
                             trigger = telemetry.l2Trigger,
+                            shortLabel = "L2 TRIGGER",
                             accentColor = MinimalGlassColors.PrimaryBlue,
                             modifier = Modifier.weight(1f)
                         )
                         CleanTriggerCard(
                             trigger = telemetry.r2Trigger,
+                            shortLabel = "R2 TRIGGER",
                             accentColor = MinimalGlassColors.SuccessGreen,
                             modifier = Modifier.weight(1f)
                         )
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         CleanTriggerCard(
                             trigger = telemetry.volumeUpTrigger,
+                            shortLabel = "VOL+ TRIGGER",
+                            accentColor = MinimalGlassColors.WarningAmber,
+                            modifier = Modifier.weight(1f)
+                        )
+                        CleanTriggerCard(
+                            trigger = telemetry.volumeDownTrigger,
+                            shortLabel = "VOL- TRIGGER",
                             accentColor = MinimalGlassColors.WarningAmber,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                // Bottom: Floating Overlay Controls (42% height, full width)
                 Box(
                     modifier = Modifier
-                        .weight(0.42f)
+                        .weight(0.40f)
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(MinimalGlassColors.CardSurface)
                         .border(1.dp, MinimalGlassColors.GlassBorder, RoundedCornerShape(14.dp))
                         .padding(14.dp)
                 ) {
-                    FloatingOverlayContent(context, triggerEngine)
+                    FloatingOverlayContent(context, triggerEngine, isOverlayRunning)
                 }
             }
         }
@@ -265,7 +278,8 @@ fun HardwareTriggerLabScreen(
 @Composable
 private fun FloatingOverlayContent(
     context: Context,
-    triggerEngine: TriggerTelemetryEngine
+    triggerEngine: TriggerTelemetryEngine,
+    isOverlayRunning: Boolean
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -273,7 +287,7 @@ private fun FloatingOverlayContent(
     ) {
         Column {
             Text(
-                text = "In-Game Floating Overlay",
+                text = "Floating Telemetry HUD",
                 style = MinimalTypography.headlineSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 15.sp),
                 color = MinimalGlassColors.TextPrimary
             )
@@ -281,7 +295,7 @@ private fun FloatingOverlayContent(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Displays real-time FPS, touch sampling rate, and gamepad polling over active 3D games.",
+                text = "Monitors display VSYNC refresh rate (Hz/FPS) and active Caliber touch/gamepad polling in a draggable overlay.",
                 style = MinimalTypography.bodyMedium,
                 color = MinimalGlassColors.TextSecondary
             )
@@ -297,9 +311,13 @@ private fun FloatingOverlayContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Active Overlay", style = MinimalTypography.bodyLarge.copy(fontWeight = FontWeight.SemiBold), color = MinimalGlassColors.TextPrimary)
+                Text(
+                    text = "Active Overlay",
+                    style = MinimalTypography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = MinimalGlassColors.TextPrimary
+                )
                 Switch(
-                    checked = FloatingTelemetryService.isRunning,
+                    checked = isOverlayRunning,
                     onCheckedChange = { checked ->
                         if (checked) {
                             if (hasOverlayPermission) {
@@ -333,7 +351,7 @@ private fun FloatingOverlayContent(
         }
 
         Text(
-            text = "Tip: You can also drag the floating badge to the bottom of the screen to close it instantly.",
+            text = "Tip: Drag the floating pill to the bottom 15% of the screen to close it at any time.",
             style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
             color = MinimalGlassColors.TextMuted
         )
@@ -343,6 +361,7 @@ private fun FloatingOverlayContent(
 @Composable
 private fun CleanTriggerCard(
     trigger: TriggerState,
+    shortLabel: String,
     accentColor: Color,
     modifier: Modifier = Modifier
 ) {
@@ -374,21 +393,22 @@ private fun CleanTriggerCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = trigger.name.replace(" (MAPPED TRIGGER)", " (MAP)").take(14),
+                    text = shortLabel,
                     style = MinimalTypography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp),
                     color = MinimalGlassColors.TextPrimary,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = if (trigger.isPressed) "Pressed" else "Idle",
-                    style = MinimalTypography.labelSmall.copy(fontSize = 9.sp),
+                    text = if (trigger.isPressed) "ACTIVE" else "Idle",
+                    style = MinimalTypography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
                     color = if (trigger.isPressed) accentColor else MinimalGlassColors.TextMuted
                 )
             }
 
             Text(
                 text = "${trigger.totalClicks}",
-                style = TelemetryFonts.Hero.copy(fontSize = 24.sp),
+                style = TelemetryFonts.Hero.copy(fontSize = 22.sp),
                 color = if (trigger.isPressed) accentColor else MinimalGlassColors.TextPrimary
             )
 
@@ -398,12 +418,12 @@ private fun CleanTriggerCard(
             ) {
                 Text(
                     text = String.format(Locale.US, "%.1f CPS", trigger.clicksPerSecond),
-                    style = MinimalTypography.labelSmall.copy(fontSize = 11.sp),
+                    style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
                     color = MinimalGlassColors.TextSecondary
                 )
                 Text(
-                    text = "${trigger.pressDurationMs} ms",
-                    style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
+                    text = if (trigger.pressDurationMs > 0) "Hold ${trigger.pressDurationMs}ms" else "-- ms",
+                    style = MinimalTypography.labelSmall.copy(fontSize = 9.sp),
                     color = MinimalGlassColors.TextMuted
                 )
             }

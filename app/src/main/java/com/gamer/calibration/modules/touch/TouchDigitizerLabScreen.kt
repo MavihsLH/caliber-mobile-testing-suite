@@ -245,26 +245,38 @@ fun TouchDigitizerLabScreen(
                         center = Offset(ptr.x, ptr.y)
                     )
 
-                    // Text overlay
+                    // Theme-aware high-contrast text overlay
+                    val labelColorInt = if (MinimalGlassColors.isDarkTheme) {
+                        android.graphics.Color.parseColor("#E2E8F0")
+                    } else {
+                        android.graphics.Color.parseColor("#1E293B")
+                    }
                     val textPaint = android.graphics.Paint().apply {
-                        this.color = android.graphics.Color.DKGRAY
-                        textSize = 28f
+                        this.color = labelColorInt
+                        textSize = 12.sp.toPx()
                         isAntiAlias = true
-                        typeface = android.graphics.Typeface.SANS_SERIF
+                        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
                     }
                     val label = "Finger ${ptr.id + 1} (${ptr.x.toInt()}, ${ptr.y.toInt()})"
+                    val labelX = (ptr.x + dynamicRadius + 10.dp.toPx()).coerceAtMost(width - 150.dp.toPx())
+                    val labelY = (ptr.y - 8.dp.toPx()).coerceAtLeast(24.dp.toPx())
                     drawContext.canvas.nativeCanvas.drawText(
                         label,
-                        ptr.x + dynamicRadius + 12f,
-                        ptr.y - 8f,
+                        labelX,
+                        labelY,
                         textPaint
                     )
                 }
 
                 if (pointers.isEmpty()) {
+                    val promptColorInt = if (MinimalGlassColors.isDarkTheme) {
+                        android.graphics.Color.parseColor("#94A3B8")
+                    } else {
+                        android.graphics.Color.parseColor("#64748B")
+                    }
                     val promptPaint = android.graphics.Paint().apply {
-                        this.color = android.graphics.Color.GRAY
-                        textSize = 30f
+                        this.color = promptColorInt
+                        textSize = 14.sp.toPx()
                         isAntiAlias = true
                         textAlign = android.graphics.Paint.Align.CENTER
                         typeface = android.graphics.Typeface.SANS_SERIF
