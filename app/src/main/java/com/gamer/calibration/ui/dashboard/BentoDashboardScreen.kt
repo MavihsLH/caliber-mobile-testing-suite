@@ -82,6 +82,8 @@ import com.gamer.calibration.domain.model.DiagnosticReport
 import com.gamer.calibration.modules.audio.AudioLatencyEngine
 import com.gamer.calibration.modules.controller.ControllerTelemetryEngine
 import com.gamer.calibration.modules.triggers.FloatingTelemetryService
+import com.gamer.calibration.modules.ads.BentoNativeAdCard
+import com.gamer.calibration.modules.ads.SupporterPreferencesDialog
 import com.gamer.calibration.ui.components.GlassOptionCard
 import com.gamer.calibration.ui.theme.MinimalGlassColors
 import com.gamer.calibration.ui.theme.MinimalTypography
@@ -139,6 +141,10 @@ fun BentoDashboardScreen(
     var isToolsExpanded by rememberSaveable {
         mutableStateOf(dashboardPrefs.getBoolean("is_tools_expanded", false))
     }
+    var isAdsEnabled by rememberSaveable {
+        mutableStateOf(dashboardPrefs.getBoolean("ads_enabled", true))
+    }
+    var showSupporterDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -297,6 +303,17 @@ fun BentoDashboardScreen(
                 }
             }
 
+            AnimatedVisibility(
+                visible = isAdsEnabled,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                BentoNativeAdCard(
+                    onOpenPreferences = { showSupporterDialog = true },
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -307,7 +324,26 @@ fun BentoDashboardScreen(
                     MinimalGlassColors.isDarkTheme = isDark
                     onThemeChanged?.invoke(isDark)
                 },
-                onDismiss = { showSettingsModal = false }
+                onDismiss = {
+                    showSettingsModal = false
+                    isAdsEnabled = dashboardPrefs.getBoolean("ads_enabled", true)
+                }
+            )
+        }
+
+        if (showSupporterDialog) {
+            SupporterPreferencesDialog(
+                onDismiss = { showSupporterDialog = false },
+                onHideAdsForFree = {
+                    isAdsEnabled = false
+                    dashboardPrefs.edit().putBoolean("ads_enabled", false).apply()
+                    showSupporterDialog = false
+                },
+                onKeepAdsActive = {
+                    isAdsEnabled = true
+                    dashboardPrefs.edit().putBoolean("ads_enabled", true).apply()
+                    showSupporterDialog = false
+                }
             )
         }
     }

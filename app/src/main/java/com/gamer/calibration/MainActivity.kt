@@ -16,6 +16,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -109,6 +110,13 @@ class MainActivity : ComponentActivity() {
         MinimalGlassColors.isDarkTheme = prefs.getBoolean("dark_mode_enabled", false)
 
         checkRequiredPermissions()
+
+        // Asynchronously initialize Google Mobile Ads SDK without blocking UI startup
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                com.google.android.gms.ads.MobileAds.initialize(this@MainActivity) {}
+            } catch (_: Exception) {}
+        }
 
         setContent {
             var currentModule by remember { mutableStateOf(CalibrationModule.DASHBOARD) }

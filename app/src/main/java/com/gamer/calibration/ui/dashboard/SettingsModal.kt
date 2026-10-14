@@ -59,9 +59,11 @@ fun SettingsModal(
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("apex_calibrate_prefs", Context.MODE_PRIVATE) }
+    val dashboardPrefs = remember { context.getSharedPreferences("caliber_dashboard_prefs", Context.MODE_PRIVATE) }
     var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var autoTareEnabled by remember { mutableStateOf(prefs.getBoolean("auto_tare_enabled", true)) }
     var keepScreenAwake by remember { mutableStateOf(prefs.getBoolean("keep_screen_awake", true)) }
+    var adsEnabled by remember { mutableStateOf(dashboardPrefs.getBoolean("ads_enabled", true)) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -246,6 +248,18 @@ fun SettingsModal(
                     onCheckedChange = { checked ->
                         keepScreenAwake = checked
                         prefs.edit().putBoolean("keep_screen_awake", checked).apply()
+                    }
+                )
+
+                HairlineDivider()
+
+                SettingsSwitchRow(
+                    title = "Homescreen Sponsor Card",
+                    subtitle = "Discrete Bento sponsor highlight to support open hardware testing",
+                    checked = adsEnabled,
+                    onCheckedChange = { checked ->
+                        adsEnabled = checked
+                        dashboardPrefs.edit().putBoolean("ads_enabled", checked).apply()
                     }
                 )
             }
