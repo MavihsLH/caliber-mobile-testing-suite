@@ -331,8 +331,13 @@ private fun DashboardTopHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            val headerLogoRes = if (MinimalGlassColors.isDarkTheme) {
+                R.drawable.caliber_header_logo
+            } else {
+                R.drawable.caliber_header_logo_light
+            }
             Image(
-                painter = painterResource(id = R.drawable.caliber_header_logo),
+                painter = painterResource(id = headerLogoRes),
                 contentDescription = "Caliber",
                 modifier = Modifier
                     .height(38.dp)
