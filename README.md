@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="images/caliber_header_logo_dark.png" alt="Caliber Logo" width="380" />
+  <img src="images/caliber_header_banner_transparent.png" alt="Caliber Logo" width="380" />
 
   <h3>The Native Android Hardware Diagnostics & Esports Calibration Suite</h3>
 
