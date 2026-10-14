@@ -18,4 +18,5 @@ captures/
 *.dex
 *.class
 repomix-output.*
-app-images
+app-images/*
+!app-images/framed-for-deployment/

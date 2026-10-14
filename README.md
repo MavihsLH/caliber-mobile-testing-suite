@@ -1,55 +1,128 @@
-# Caliber — Mobile Gamer Calibration & Diagnostic Suite
+<div align="center">
 
-A high-performance, native Android hardware diagnostics and calibration suite engineered specifically for mobile esports competitors, phone hardware reviewers, and competitive gamers. Built with **Kotlin** and **Jetpack Compose**, designed around an **OLED-Optimized Cyber Aesthetic**, and powered by high-frequency hardware event telemetry pipelines decoupled from Compose recomposition churn.
+  <img src="images/caliber_header_logo_dark.png" alt="Caliber Logo" width="380" />
 
-100% on-device and privacy-first — no cloud dependencies, no accounts, and zero telemetry tracking.
+  <h3>The Native Android Hardware Diagnostics & Esports Calibration Suite</h3>
+
+  <p>
+    <strong>Engineered for competitive mobile gamers, esports athletes, and hardware reviewers.</strong><br/>
+    Benchmarking true digitizer touch polling rates, eliminating gyro drift, diagnosing gamepad stick circularity, and syncing sub-frame audio latency.
+  </p>
+
+  <p>
+    <a href="https://github.com/MavihsLH/caliber-mobile-testing-suite/releases"><img src="https://img.shields.io/badge/Platform-Android_8.0+_(API_26–36)-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Platform: Android" /></a>
+    <a href="https://kotlinlang.org"><img src="https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white" alt="Language: Kotlin" /></a>
+    <a href="https://developer.android.com/jetpack/compose"><img src="https://img.shields.io/badge/UI-Jetpack_Compose-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" /></a>
+    <a href="#-privacy-first-architecture"><img src="https://img.shields.io/badge/Privacy-100%25_Offline-00FF9D?style=for-the-badge&logo=shield&logoColor=black" alt="Privacy First" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-38BDF8?style=for-the-badge" alt="License" /></a>
+  </p>
+
+  <br/>
+
+  <img src="app-images/framed-for-deployment/main-headline.png" alt="Caliber Hero Banner - Tune Your Setup" width="100%" />
+
+</div>
 
 ---
 
-## 🎮 Key Capabilities & Native Modules
+## ⚡ Overview
+
+**Caliber** is an open-source, bare-metal hardware diagnostics and calibration suite built from the ground up in modern **Kotlin** and **Jetpack Compose**. Unlike generic test apps that are bottlenecked by standard 60Hz/120Hz UI draw cycles, Caliber bypasses Android compositor constraints with high-frequency event capture pipelines, sample-accurate acoustic loopback, and zero-allocation hardware telemetry.
+
+Whether you are tuning claw-grip sensitivity for *PUBG Mobile* / *Warzone Mobile*, verifying a smartphone's advertised 720Hz touch sampling claim, testing for Hall Effect joystick circularity, or calibrating millisecond audio offset for rhythm games, Caliber provides laboratory-grade telemetry right on your device.
+
+---
+
+## 🎨 Dual Theme Design System
+
+Caliber features an adaptive, gamer-centric interface designed specifically for competitive landscape play.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/light_dark_sidebyside.png" alt="Caliber Dual Theme - Dark OLED vs Clean Light Mode" width="100%" />
+</p>
+
+* **OLED Cyber Dark Mode:** Pure Pitch Black (`#000000`) canvas with high-contrast Cyber Cyan (`#38BDF8`), Matrix Green (`#00FF9D`), Warning Amber (`#FF9500`), and Crimson (`#FF2A55`) accents. Maximizes OLED battery conservation and minimizes ambient glare during tournaments.
+* **Crisp Daylight Mode:** Clean, slate-tinted daylight interface engineered for outdoor sunlight legibility and hardware review photography.
+* **State-Preserving Bento Dashboard:** Segmented accordion layout that remembers your exact workspace preferences and open categories across deep navigation.
+
+---
+
+## 🕹️ Deep-Dive Hardware Modules
 
 ### 1. Touchscreen & Digitizer Lab (Direct API)
-* **True Hardware Polling Rate (Hz):** Bypasses OS frame rate limitations (e.g. 120Hz display refresh) by capturing sub-frame historical coordinates via `MotionEvent.getHistoricalX()` / `getHistoricalY()` and `getHistoricalEventTime()`. Accurately benchmarks true digitizer hardware capabilities (240Hz, 360Hz, 480Hz, 720Hz+).
-* **10-Point Claw Grip Matrix & Pressure:** Multi-finger tracking designed for 4-finger to 6-finger claw-grip mobile esports layouts. Renders real-time contact disc halo scaled by `MotionEvent.getPressure()` and `MotionEvent.getSize()`.
-* **Historical Packet Jitter Engine:** Computes standard deviation ($\sigma$) of packet arrival intervals in milliseconds and historical packets per VSYNC frame.
-* **Direct Canvas Rendering:** Zero-allocation, high-speed vector trails using `withFrameNanos` and `DrawScope` without triggering Compose recomposition bottlenecks.
+
+Verify true digitizer hardware capabilities beyond standard OS display refresh limitations.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/touch_sampling_landscape-framed.png" alt="Touch Sampling Rate & Multi-Touch Digitizer Lab" width="100%" />
+</p>
+
+* **Sub-Frame Historical Coordinate Interrogation:** Captures uncoalesced sub-frame micro-packets via `MotionEvent.getHistoricalX()`, `getHistoricalY()`, and `getHistoricalEventTime()`. Accurately isolates true digitizer polling (240Hz, 360Hz, 480Hz, 720Hz+) from display VSYNC.
+* **10-Point Claw Grip Matrix:** Tracks simultaneous multi-finger inputs for 4-finger to 6-finger competitive layouts with contact discs scaled dynamically by `MotionEvent.getPressure()` and `MotionEvent.getSize()`.
+* **Packet Jitter & Interval Variance ($\sigma$):** Real-time standard deviation calculation of packet arrival intervals in milliseconds to detect touch polling instability and micro-stutters.
+* **Zero-Allocation Canvas Engine:** Direct `DrawScope` vector rendering decoupled from Compose recomposition churn.
+
+---
 
 ### 2. Motion Sensor Lab (6-Axis IMU & Zero-Point Drift)
-* **High-Speed Sensor Hook:** Hooks into `SensorManager` with `SENSOR_DELAY_FASTEST` for `Sensor.TYPE_GYROSCOPE` and `Sensor.TYPE_ACCELEROMETER` (>200Hz–400Hz+ sampling).
-* **Zero-Point Drift Calibration:** Measures resting gyro bias $(\mu_x, \mu_y, \mu_z)$, calculates drift magnitude $\|\vec{\omega}\|$ in degrees/sec and radians/sec, and analyzes sensor noise variance $\sigma^2$.
-* **Oscilloscope Waveform:** 3-channel continuous rolling graph (Gyro X in Neon Cyan, Y in Neon Green, Z in Warning Orange).
-* **Tare / Calibration Bias Elimination:** Single-tap hardware offset subtraction to eliminate unwanted gyro crosshair drift in titles like *PUBG Mobile*, *Call of Duty: Warzone Mobile*, and *Apex Legends Mobile*.
 
-### 3. Hardware Triggers & Floating Telemetry HUD
-* **Gaming Phone Shoulder Key Sniffer:** Sniffs physical and ultrasonic capacitive shoulder triggers (L1, R1, L2, R2, Volume rocker mapped keys found on Asus ROG Phone, Black Shark, RedMagic).
-* **Actuation Latency & Clicks-Per-Second (CPS):** Measures press-down to release duration in milliseconds, hold time, and real-time rapid-fire CPS.
-* **System Overlay HUD Widget:** Runs as an Android Foreground Service using `Settings.ACTION_MANAGE_OVERLAY_PERMISSION` (`SYSTEM_ALERT_WINDOW`). Draws an ultra-compact, draggable HUD over active 3D games displaying live hardware FPS (via `Choreographer`), touch polling rate (Hz), and controller polling rate (Hz).
+Eliminate gyro drift and tune tilt-aiming responsiveness for mobile FPS and racing titles.
 
-### 4. Controller Precision Lab (Hall Effect Focus)
-* **InputDevice Interrogation:** Interrogates connected gamepads via `InputDevice.getDeviceIds()`, identifying Vendor ID, Product ID, battery status, and axis capabilities.
-* **Hall Effect vs Potentiometer Stick Analysis:**
-  * Maps 360 angular sectors ($1^\circ$ bins) across stick rotation sweeps.
-  * Calculates outer boundary circularity error:
-    $$\text{Circularity Error \%} = \frac{1}{N} \sum_{i=1}^{N} |r_i - 1.0| \times 100\%$$
-  * Distinguishes high-end Hall Effect / TMR electromagnetic sensors (smooth circular gating, error $< 5\%$) from traditional potentiometers (square clipping, error $> 15\%$).
-* **Inner & Outer Deadzone Detection:** Detects residual stick center drift and premature boundary saturation.
-* **Dual Rumble Motor Testing:** Tests asymmetric haptic feedback motors (heavy low-frequency rumble vs crisp high-frequency rumble) with independent amplitude sliders.
+<p align="center">
+  <img src="app-images/framed-for-deployment/gyro_calibration_framed.png" alt="Gyroscope Calibration & Zero-Point Drift Lab" width="100%" />
+</p>
 
-### 5. Bare-Metal Audio Latency (Acoustic Matched-Filter Ping)
-* **Bypasses Software Audio Mixer:** Utilizes `AudioTrack` and `AudioRecord` configured with `PERFORMANCE_MODE_LOW_LATENCY` and `AudioAttributes.FLAG_LOW_LATENCY` (AAudio / Oboe fast track HAL pipeline).
-* **Acoustic Loopback Correlation:**
-  1. Synthesizes a 15ms Hann-windowed 2.4 kHz transient audio chirp.
-  2. Emits chirp via speaker / Bluetooth earbud / 3.5mm DAC.
-  3. Records physical arrival via microphone at 48,000 Hz.
-  4. Runs cross-correlation (matched filter) $R_{xy}[k] = \sum_n x[n] y[n+k]$ to locate exact sample index of physical sound arrival.
-  5. Computes sample-accurate round-trip audio transit delay ($ms$) and jitter standard deviation.
-* **Audio Routing Detection:** Identifies connected routes: Analog 3.5mm / Type-C DAC ($<25$ms), Low Latency aptX / gaming mode ($40-70$ms), vs standard Bluetooth SBC/AAC ($120-220$ms).
+* **High-Speed Sensor Hook:** Direct interface to `SensorManager` with `SENSOR_DELAY_FASTEST` for `Sensor.TYPE_GYROSCOPE` and `Sensor.TYPE_ACCELEROMETER` (>200Hz–400Hz+ sampling rate).
+* **Zero-Point Drift Calibration:** Computes resting angular velocity bias $(\mu_x, \mu_y, \mu_z)$, drift magnitude $\|\vec{\omega}\|$ in $^{\circ}/\text{s}$ and $\text{rad}/\text{s}$, and sensor noise variance $\sigma^2$.
+* **3-Channel Rolling Oscilloscope:** Live continuous waveform tracking of Gyro X (Cyan), Y (Green), and Z (Amber) axes.
+* **One-Tap Tare Bias Subtraction:** Instantly zeroes out sensor tilt bias on the fly to prevent crosshair drift during critical engagements.
 
-### 6. Sensitivity Converter
-* Mathematical cross-engine sensitivity translator across 12+ competitive mobile FPS/TPS titles:
+---
+
+### 3. Controller Precision Lab (Hall Effect & Joysticks)
+
+Benchmark gamepad analog stick precision, verify Hall Effect electromagnetic sensors, and test haptic motors.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/controller_calibration_framed.png" alt="Controller Precision & Stick Circularity Lab" width="100%" />
+</p>
+
+* **360° Circularity Error Benchmark:** Maps stick sweeps across 360 angular sectors ($1^\circ$ bins) and calculates outer boundary circularity error:
+  $$\text{Circularity Error \%} = \frac{1}{N} \sum_{i=1}^{N} |r_i - 1.0| \times 100\%$$
+* **Hall Effect vs. Potentiometer Verification:** Instantly exposes squared outer clipping (typical of degraded potentiometers, error $>15\%$) versus smooth true circular gating (Hall Effect / TMR electromagnetic sensors, error $<5\%$).
+* **Centering & Deadzone Analysis:** Identifies mechanical stick drift at rest and premature boundary saturation.
+* **Dual Rumble Motor Testing:** Independently triggers low-frequency and high-frequency vibration motors with real-time duty cycle sliders.
+
+---
+
+### 4. Audio Delay Sync & Latency Suite
+
+Measure and calibrate millisecond audio-visual latency for rhythm games, FPS titles, and emulators.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/audio_delay_sync_taptothebeat_framed.png" alt="Audio Delay Sync & Tap-To-The-Beat Rhythm Calibrator" width="100%" />
+</p>
+
+* **Interactive Tap-to-the-Beat Calibrator:** Rhythm game audio offset calibrator designed for *Project Sekai*, *Arcaea*, *Cytus II*, *Phigros*, and *Lanota*. Computes mean tap timing offset ($\Delta t$) and jitter standard deviation with instant in-app auditioning.
+* **Bare-Metal Acoustic Matched-Filter Ping:** Synthesizes a 15ms Hann-windowed 2.4 kHz transient audio chirp via `AudioTrack` and captures physical sound arrival through `AudioRecord` at 48,000 Hz.
+* **Cross-Correlation Detection ($R_{xy}$):**
+  $$R_{xy}[k] = \sum_n x[n] y[n+k]$$
+  Calculates sample-accurate round-trip transit delay, distinguishing low-latency 3.5mm/Type-C DACs ($<25\text{ms}$) and gaming codecs ($40–70\text{ms}$) from standard Bluetooth SBC/AAC ($120–220\text{ms}$).
+
+---
+
+### 5. Universal Sensitivity Converter
+
+Translate aim muscle memory seamlessly across competitive mobile shooter engines.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/sensitivity_converter_framed.png" alt="Universal Mobile FPS/TPS Sensitivity Converter" width="100%" />
+</p>
+
+* **Cross-Engine Aim Translation:** Mathematically maps standard camera, ADS, and scoped sensitivities across major competitive mobile shooters:
   * *PUBG Mobile / BGMI*
   * *Call of Duty: Mobile (CODM)*
-  * *Warzone Mobile*
+  * *Call of Duty: Warzone Mobile*
   * *Apex Legends Mobile*
   * *Free Fire / Free Fire MAX*
   * *Arena Breakout*
@@ -59,54 +132,93 @@ A high-performance, native Android hardware diagnostics and calibration suite en
   * *Critical Ops*
   * *Standoff 2*
   * *Special Forces Group 2 / Combat Master*
-* Supports scoped optics multipliers (Red Dot / Holo, 2x, 3x, 4x, 6x, 8x / Sniper) and FoV scaling ratios.
-
-### 7. Rhythm Game Audio Offset Calibrator
-* Interactive audio-visual synchronizer designed for rhythm games (*Project Sekai*, *Arcaea*, *Cytus II*, *Phigros*, *Lanota*).
-* Tap-to-the-beat metronome measuring exact tap timing deltas, calculating mean user sync offset ($\Delta t$) and jitter standard deviation, with direct in-app auditioning.
-
-### 8. Target Acquisition & Micro-Flick Drill
-* Dynamic target acquisition reaction training ground:
-  * Multiple modes: Speed Flick, Precision Micro-Adjustment, Dynamic Reflex Tracking.
-  * Real-time metrics: TTF (Time to First Hit in ms), Miss Rate %, Target Dispersion radius, and overall Esports Grade (S+, S, A, B, C).
-
-### 9. Reaction Benchmark
-* Clean visual (and auditory) stimulus reaction time benchmark with randomized false-start penalty guards, computing mean latency, 95th percentile, and standard deviation.
-
-### 10. System Settings Guide
-* Interactive hardware optimization checklist guiding competitive gamers through OEM-specific tweaks:
-  * Maximum display refresh rate locking
-  * Touch sampling boost / game turbo configuration
-  * Disabling touch edge-mistouch suppression
-  * Background throttle & battery optimization exemptions
-  * Low latency Bluetooth codec selection (LDAC / aptX Adaptive / LHDC)
+* **Full Optical Reticle Support:** Scales sensitivity across 1x Red Dot / Holographic, 2x, 3x, 4x, 6x, and 8x Sniper scopes with FoV compensation.
 
 ---
 
-## 🎨 UI & Design Philosophy
+### 6. System Settings & Gaming Optimization Guide
 
-* **OLED-Optimized Cyber Aesthetics:** Pure Black (`#000000`) background, dark gray containers (`#121212`), Cyber Cyan (`#38BDF8`), Neon Green (`#00FF9D`), Warning Orange (`#FF9500`), and Crimson Red (`#FF2A55`).
-* **Bento Spatial Organization:** Interactive segmented accordion structure for fast category switching, remembering user state across navigation.
-* **Utilitarian Typography:** Clean Sans-Serif for titles and strict Monospace font for live fluctuating telemetry figures.
-* **Orientation:** Locked to `SCREEN_ORIENTATION_USER_LANDSCAPE` for esports phone form-factor ergonomics.
+Unlock maximum performance from your device with an interactive hardware optimization checklist.
+
+<p align="center">
+  <img src="app-images/framed-for-deployment/system_settings_guide_framed.png" alt="System Settings & Performance Optimization Guide" width="100%" />
+</p>
+
+* **Step-by-Step Optimization Routines:**
+  * Forcing maximum display refresh rate (90Hz / 120Hz / 144Hz / 165Hz)
+  * Enabling OEM Game Turbo / Game Space touch sampling boost
+  * Disabling palm and edge mis-touch deadzones
+  * Removing aggressive OS thermal throttling & battery saver limits
+  * Configuring low-latency Bluetooth audio codecs (LDAC, aptX Adaptive, LHDC)
+* **Direct System Shortcuts:** One-tap navigation to deep Android settings submenus (Developer Options, Display Settings, Battery Optimization).
 
 ---
 
-## ⚙️ Architecture & Build Instructions
+## 🎯 Additional Esports Testing Tools
 
-### Prerequisites
-* Android Studio (Ladybug / Jellyfish or newer)
-* Android SDK 35 / 36
-* JDK 21 (Bundled in Android Studio JBR)
-* Gradle 8.14.3
+| Module | Purpose | Metrics Captured |
+| :--- | :--- | :--- |
+| **Physical Triggers & Floating HUD** | Test capacitive shoulder buttons & display in-game telemetry HUD. | Actuation latency (ms), Hold duration, Clicks-per-second (CPS), Live In-Game Overlay FPS & Touch Hz. |
+| **Target Acquisition Drill** | Benchmark reaction and micro-flick target acquisition accuracy. | Time to First Hit (TTF in ms), Miss Rate %, Target Dispersion radius, Esports Tier (S+ to C). |
+| **Visual Reaction Benchmark** | Measure pure neuromuscular visual stimulus response. | Best latency, Mean latency, 95th percentile, False-start penalty protection. |
 
-### Build via Command Line
-```powershell
-# Set environment paths
-$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
-$env:ANDROID_HOME="C:\Users\<user>\AppData\Local\Android\Sdk"
+---
 
-# Compile and verify Kotlin sources
-.\gradlew assembleDebug
+## 🔒 Privacy-First Architecture
+
+* **100% Offline & Local:** Caliber executes entirely on-device. No telemetry, no analytics beacons, and no tracking libraries.
+* **No Account Required:** No logins, subscriptions, or dark patterns.
+* **Transparent Permissions:** Only requests hardware permissions essential for testing (e.g., `RECORD_AUDIO` strictly for acoustic loopback ping; `SYSTEM_ALERT_WINDOW` strictly for optional floating HUD).
+
+---
+
+## 🛠️ Architecture & Tech Stack
+
+```mermaid
+graph TD
+    A[Hardware Sensors & Peripherals] -->|MotionEvent / getHistorical| B[Touch Engine - Direct Canvas]
+    A -->|SensorManager / SENSOR_DELAY_FASTEST| C[IMU Gyro Engine - 400Hz]
+    A -->|InputDevice API| D[Controller Precision Lab - Hall Effect]
+    A -->|AAudio / AudioRecord / 48kHz| E[Acoustic Ping Latency & Beat Sync]
+    B --> F[Decoupled StateFlow Telemetry Streams]
+    C --> F
+    D --> F
+    E --> F
+    F --> G[Jetpack Compose UI & Bento Dashboard]
 ```
 
+* **Language:** Kotlin 2.0.21
+* **UI Framework:** Jetpack Compose (BOM 2024.10.00) with Material 3 Dynamic Theming
+* **Graphics:** Direct vector operations via `DrawScope`, zero-allocation rendering with `withFrameNanos`
+* **Sensor Pipeline:** `SensorManager` event listeners executing on background coroutine dispatchers
+* **Audio Pipeline:** `AudioTrack` & `AudioRecord` with `PERFORMANCE_MODE_LOW_LATENCY`
+
+---
+
+## 🚀 Building from Source
+
+### Prerequisites
+* **Android Studio:** Ladybug (2024.2.1) or newer
+* **Android SDK:** API Level 35 / 36
+* **JDK:** Version 21 (bundled with Android Studio JBR)
+* **Gradle:** 8.14.3
+
+### Build Commands
+
+```powershell
+# Clone the repository
+git clone https://github.com/MavihsLH/caliber-mobile-testing-suite.git
+cd "caliber-mobile-testing-suite"
+
+# Build debug APK
+.\gradlew assembleDebug
+
+# Install on connected device via ADB
+.\gradlew installDebug
+```
+
+---
+
+## 📄 License
+
+Caliber is licensed under the **Apache License, Version 2.0**. See the [LICENSE](LICENSE) file for full details.
