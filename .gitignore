@@ -17,3 +17,4 @@ captures/
 *.ap_
 *.dex
 *.class
+repomix-output.*
