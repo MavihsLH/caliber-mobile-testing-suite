@@ -63,7 +63,8 @@ fun SettingsModal(
     var hapticsEnabled by remember { mutableStateOf(prefs.getBoolean("haptics_enabled", true)) }
     var autoTareEnabled by remember { mutableStateOf(prefs.getBoolean("auto_tare_enabled", true)) }
     var keepScreenAwake by remember { mutableStateOf(prefs.getBoolean("keep_screen_awake", true)) }
-    var adsEnabled by remember { mutableStateOf(dashboardPrefs.getBoolean("ads_enabled", true)) }
+    val hasDonated by remember { mutableStateOf(dashboardPrefs.getBoolean("has_donated", false)) }
+    var displayAdEnabled by remember { mutableStateOf(dashboardPrefs.getBoolean("display_ad_enabled", true)) }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -254,12 +255,16 @@ fun SettingsModal(
                 HairlineDivider()
 
                 SettingsSwitchRow(
-                    title = "Homescreen Sponsor Card",
-                    subtitle = "Discrete Bento sponsor highlight to support open hardware testing",
-                    checked = adsEnabled,
+                    title = "Display AD",
+                    subtitle = if (hasDonated) "Thank you for your support! Ads are permanently removed." else "Supports me by keeping it on (or donate to remove)",
+                    checked = displayAdEnabled && !hasDonated,
+                    enabled = !hasDonated,
                     onCheckedChange = { checked ->
-                        adsEnabled = checked
-                        dashboardPrefs.edit().putBoolean("ads_enabled", checked).apply()
+                        displayAdEnabled = checked
+                        dashboardPrefs.edit()
+                            .putBoolean("display_ad_enabled", checked)
+                            .remove("ads_hidden_until")
+                            .apply()
                     }
                 )
             }
@@ -324,6 +329,7 @@ private fun SettingsSwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(
@@ -339,7 +345,7 @@ private fun SettingsSwitchRow(
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp
                 ),
-                color = MinimalGlassColors.TextPrimary
+                color = if (enabled) MinimalGlassColors.TextPrimary else MinimalGlassColors.TextMuted
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -351,6 +357,7 @@ private fun SettingsSwitchRow(
 
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,

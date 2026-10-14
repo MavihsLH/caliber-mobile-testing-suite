@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.TrackChanges
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -141,8 +142,19 @@ fun BentoDashboardScreen(
     var isToolsExpanded by rememberSaveable {
         mutableStateOf(dashboardPrefs.getBoolean("is_tools_expanded", false))
     }
-    var isAdsEnabled by rememberSaveable {
-        mutableStateOf(dashboardPrefs.getBoolean("ads_enabled", true))
+
+    fun checkIsAdActive(): Boolean {
+        if (dashboardPrefs.getBoolean("has_donated", false)) return false
+        if (!dashboardPrefs.getBoolean("display_ad_enabled", true)) return false
+        val hiddenUntil = dashboardPrefs.getLong("ads_hidden_until", 0L)
+        return System.currentTimeMillis() >= hiddenUntil
+    }
+
+    var hasDonated by rememberSaveable {
+        mutableStateOf(dashboardPrefs.getBoolean("has_donated", false))
+    }
+    var isAdsVisible by rememberSaveable {
+        mutableStateOf(checkIsAdActive())
     }
     var showSupporterDialog by remember { mutableStateOf(false) }
 
@@ -152,7 +164,9 @@ fun BentoDashboardScreen(
             .background(MinimalGlassColors.Background)
     ) {
         DashboardTopHeader(
-            onOpenSettings = { showSettingsModal = true }
+            hasDonated = hasDonated,
+            onOpenSettings = { showSettingsModal = true },
+            onOpenDonate = { showSupporterDialog = true }
         )
 
         Column(
@@ -163,6 +177,18 @@ fun BentoDashboardScreen(
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(if (isCompactView) 8.dp else 12.dp)
         ) {
+            // Homescreen Ad (Moved to top of feed)
+            AnimatedVisibility(
+                visible = isAdsVisible,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                BentoNativeAdCard(
+                    onHideAds = { showSupporterDialog = true },
+                    modifier = Modifier.padding(bottom = if (isCompactView) 4.dp else 6.dp)
+                )
+            }
+
             DeviceSpecsCard(specs = deviceSpecs)
 
             DiagnosticReportBanner(
@@ -303,17 +329,6 @@ fun BentoDashboardScreen(
                 }
             }
 
-            AnimatedVisibility(
-                visible = isAdsEnabled,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                BentoNativeAdCard(
-                    onOpenPreferences = { showSupporterDialog = true },
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
         }
 
@@ -326,22 +341,28 @@ fun BentoDashboardScreen(
                 },
                 onDismiss = {
                     showSettingsModal = false
-                    isAdsEnabled = dashboardPrefs.getBoolean("ads_enabled", true)
+                    hasDonated = dashboardPrefs.getBoolean("has_donated", false)
+                    isAdsVisible = checkIsAdActive()
                 }
             )
         }
 
         if (showSupporterDialog) {
             SupporterPreferencesDialog(
+                hasDonated = hasDonated,
                 onDismiss = { showSupporterDialog = false },
-                onHideAdsForFree = {
-                    isAdsEnabled = false
-                    dashboardPrefs.edit().putBoolean("ads_enabled", false).apply()
+                onDonate = {
+                    hasDonated = true
+                    isAdsVisible = false
+                    dashboardPrefs.edit().putBoolean("has_donated", true).apply()
                     showSupporterDialog = false
                 },
-                onKeepAdsActive = {
-                    isAdsEnabled = true
-                    dashboardPrefs.edit().putBoolean("ads_enabled", true).apply()
+                onHideForFree = {
+                    val sevenDaysMillis = 7 * 24 * 60 * 60 * 1000L
+                    dashboardPrefs.edit()
+                        .putLong("ads_hidden_until", System.currentTimeMillis() + sevenDaysMillis)
+                        .apply()
+                    isAdsVisible = false
                     showSupporterDialog = false
                 }
             )
@@ -351,7 +372,9 @@ fun BentoDashboardScreen(
 
 @Composable
 private fun DashboardTopHeader(
-    onOpenSettings: () -> Unit
+    hasDonated: Boolean,
+    onOpenSettings: () -> Unit,
+    onOpenDonate: () -> Unit
 ) {
     val isHudActive by FloatingTelemetryService.isRunningFlow.collectAsState()
     Box(
@@ -410,6 +433,54 @@ private fun DashboardTopHeader(
                                 color = MinimalGlassColors.SuccessGreen
                             )
                         }
+                    }
+                }
+
+                // Donate Pill Button / Supporter Badge
+                if (!hasDonated) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MinimalGlassColors.PrimaryBlueLight)
+                            .border(1.dp, MinimalGlassColors.PrimaryBlue.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                            .clickable { onOpenDonate() }
+                            .padding(horizontal = 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = null,
+                            tint = MinimalGlassColors.PrimaryBlue,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Donate",
+                            style = MinimalTypography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MinimalGlassColors.PrimaryBlue
+                        )
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MinimalGlassColors.SuccessGreenLight)
+                            .border(1.dp, MinimalGlassColors.SuccessGreen.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .clickable { onOpenDonate() }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "SUPPORTER",
+                            style = MinimalTypography.labelSmall.copy(
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            ),
+                            color = MinimalGlassColors.SuccessGreen
+                        )
                     }
                 }
 

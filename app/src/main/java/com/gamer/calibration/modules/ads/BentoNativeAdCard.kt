@@ -97,7 +97,7 @@ object AdmobConfig {
  */
 @Composable
 fun BentoNativeAdCard(
-    onOpenPreferences: () -> Unit,
+    onHideAds: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -146,7 +146,7 @@ fun BentoNativeAdCard(
         Column(
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Header Bar: [ SPONSORED ] badge + Dismiss/Options trigger
+            // Header Bar: [ AD ] badge + [ Hide Ads ] button
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -164,11 +164,11 @@ fun BentoNativeAdCard(
                             .padding(horizontal = 7.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "SPONSORED",
+                            text = "AD",
                             style = MinimalTypography.labelSmall.copy(
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                letterSpacing = 0.6.sp
+                                letterSpacing = 0.5.sp
                             ),
                             color = MinimalGlassColors.PrimaryBlue
                         )
@@ -183,15 +183,28 @@ fun BentoNativeAdCard(
                     }
                 }
 
-                IconButton(
-                    onClick = onOpenPreferences,
-                    modifier = Modifier.size(28.dp)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MinimalGlassColors.BackgroundSubtle)
+                        .clickable { onHideAds() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.MoreHoriz,
-                        contentDescription = "Ad options & Supporter settings",
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Hide ad",
                         tint = MinimalGlassColors.TextMuted,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "Hide Ads",
+                        style = MinimalTypography.labelSmall.copy(
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        color = MinimalGlassColors.TextMuted
                     )
                 }
             }
@@ -247,7 +260,7 @@ fun BentoNativeAdCard(
                 }
             } else {
                 // Graceful fallback card when offline or no fill
-                GracefulSponsorFallbackCard(onOpenPreferences = onOpenPreferences)
+                GracefulSponsorFallbackCard(onHideAds = onHideAds)
             }
         }
     }
@@ -399,7 +412,7 @@ private fun dpToPx(context: Context, dp: Int): Int {
  */
 @Composable
 private fun GracefulSponsorFallbackCard(
-    onOpenPreferences: () -> Unit
+    onHideAds: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -430,12 +443,12 @@ private fun GracefulSponsorFallbackCard(
 
             Column {
                 Text(
-                    text = "Caliber is 100% Free & Open-Source",
+                    text = "Support the Developer",
                     style = MinimalTypography.bodyMedium.copy(fontWeight = FontWeight.SemiBold, fontSize = 12.sp),
                     color = MinimalGlassColors.TextPrimary
                 )
                 Text(
-                    text = "No locked features. Turn off ads anytime or drop a tip.",
+                    text = "Keeping ads on or donating supports ongoing development.",
                     style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
                     color = MinimalGlassColors.TextSecondary
                 )
@@ -446,28 +459,28 @@ private fun GracefulSponsorFallbackCard(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
                 .background(MinimalGlassColors.BackgroundSubtle)
-                .clickable { onOpenPreferences() }
+                .clickable { onHideAds() }
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
             Text(
-                text = "Options",
+                text = "Hide Ads",
                 style = MinimalTypography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                color = MinimalGlassColors.PrimaryBlue
+                color = MinimalGlassColors.TextMuted
             )
         }
     }
 }
 
 /**
- * Supporter & Ad Preferences Dialog.
- * Transparent honor system: lets users disable the homescreen ad card for free,
- * or choose to support the project.
+ * Concise Support & Hide Ads Dialog.
+ * Direct, polite, and free of word spaghetti.
  */
 @Composable
 fun SupporterPreferencesDialog(
+    hasDonated: Boolean,
     onDismiss: () -> Unit,
-    onHideAdsForFree: () -> Unit,
-    onKeepAdsActive: () -> Unit
+    onDonate: () -> Unit,
+    onHideForFree: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -481,15 +494,15 @@ fun SupporterPreferencesDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.LocalCafe,
+                    imageVector = Icons.Default.Favorite,
                     contentDescription = null,
                     tint = MinimalGlassColors.PrimaryBlue,
                     modifier = Modifier.size(22.dp)
                 )
                 Text(
-                    text = "Support & Ad Preferences",
+                    text = if (hasDonated) "Caliber Supporter" else "Support Caliber",
                     style = MinimalTypography.headlineMedium.copy(
-                        fontSize = 17.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
                 )
@@ -498,105 +511,75 @@ fun SupporterPreferencesDialog(
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    text = "Caliber is engineered with zero paywalls, zero locked features, and zero telemetry. Ads help fund precision testing hardware.",
-                    style = MinimalTypography.bodyMedium.copy(fontSize = 12.sp),
+                    text = if (hasDonated) {
+                        "Thank you so much for supporting me! Ads are permanently disabled on your device."
+                    } else {
+                        "I build and maintain Caliber independently. Contributions directly support me personally so I can keep updating the app and adding new tools.\n\nIf you can't or don't want to pay, that's completely okay too!"
+                    },
+                    style = MinimalTypography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 18.sp),
                     color = MinimalGlassColors.TextSecondary
                 )
 
-                // Option 1: Hide for Free (Honor System)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MinimalGlassColors.BackgroundSubtle)
-                        .border(1.dp, MinimalGlassColors.GlassBorderSubtle, RoundedCornerShape(12.dp))
-                        .clickable { onHideAdsForFree() }
-                        .padding(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                if (!hasDonated) {
+                    // Big prominent Donate button
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MinimalGlassColors.PrimaryBlue)
+                            .clickable { onDonate() }
+                            .padding(vertical = 13.dp),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(MinimalGlassColors.SuccessGreenLight),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Default.VisibilityOff,
+                                imageVector = Icons.Default.LocalCafe,
                                 contentDescription = null,
-                                tint = MinimalGlassColors.SuccessGreen,
-                                modifier = Modifier.size(18.dp)
+                                tint = Color.White,
+                                modifier = Modifier.size(17.dp)
                             )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Hide Ads for Free",
+                                text = "Donate $1.99 — Remove Ads Forever",
                                 style = MinimalTypography.bodyMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp
                                 ),
-                                color = MinimalGlassColors.TextPrimary
-                            )
-                            Text(
-                                text = "Honest gamer pledge — no questions asked. We want you to have the cleanest setup possible.",
-                                style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
-                                color = MinimalGlassColors.TextMuted
+                                color = Color.White
                             )
                         }
                     }
-                }
 
-                // Option 2: Keep Ads Active (Help the dev)
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MinimalGlassColors.BackgroundSubtle)
-                        .border(1.dp, MinimalGlassColors.GlassBorderSubtle, RoundedCornerShape(12.dp))
-                        .clickable { onKeepAdsActive() }
-                        .padding(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    // Small text at the bottom: Hide for free
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Box(
+                        Text(
+                            text = "Hide ads for free",
+                            style = MinimalTypography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            color = MinimalGlassColors.TextMuted,
                             modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(MinimalGlassColors.PrimaryBlueLight),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = MinimalGlassColors.PrimaryBlue,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Keep Sponsor Card Active",
-                                style = MinimalTypography.bodyMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                ),
-                                color = MinimalGlassColors.TextPrimary
-                            )
-                            Text(
-                                text = "Leave the discrete Bento card on the homescreen to support continuous updates.",
-                                style = MinimalTypography.labelSmall.copy(fontSize = 10.sp),
-                                color = MinimalGlassColors.TextMuted
-                            )
-                        }
+                                .clickable { onHideForFree() }
+                                .padding(vertical = 4.dp, horizontal = 8.dp)
+                        )
+                        Text(
+                            text = "(Resurfaces in 7 days • Can be toggled in Settings)",
+                            style = MinimalTypography.labelSmall.copy(
+                                fontSize = 9.sp
+                            ),
+                            color = MinimalGlassColors.TextMuted.copy(alpha = 0.65f)
+                        )
                     }
                 }
             }
